@@ -11,11 +11,11 @@
 </p>
 
 <p align="center">
-  <strong>Map the multi-process tree of any CEF, Electron, or Chromium app — and kill stuck workers without touching the rest.</strong>
+  <strong>Map multi-process tree of any CEF, Electron, or Chromium app.</strong>
 </p>
 
 <p align="center">
-  <em>Cross-platform desktop tool for developers debugging multi-process browsers and embedded runtimes.</em>
+  <em>Cross-platform tool for developers debugging multi-process browsers and embedded runtimes.</em>
 </p>
 
 ---
