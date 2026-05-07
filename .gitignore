@@ -1,0 +1,67 @@
+# Build directories — anchored to repo root so cmd/gui/build/ template
+# files (info.json, manifest, installer scripts) stay tracked. Copied
+# artifacts under cmd/gui/build/ are listed explicitly below.
+/build/
+/dist/
+
+# Go binaries
+ceftop
+ceftop.exe
+CefTopApp
+CefTopApp.exe
+gui.exe
+
+# Wails — track template files, ignore build output and copied icons
+cmd/gui/build/bin/
+cmd/gui/build/appicon.png
+cmd/gui/build/windows/icon.ico
+cmd/gui/frontend/node_modules/
+cmd/gui/frontend/dist/
+cmd/gui/frontend/public/app-icons/
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.sln
+*.vcxproj*
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Compiled (legacy)
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.dylib
+*.so
+
+# Local environment (private host names, tokens, etc.)
+.env*
+!docs/.env.example
+
+# Test scripts at repo root (contain real account data)
+
+# AI ignored paths
+/CONTINUITY*.md
+.continuity/
+.claude/*.local.*
+tmpclaude-*-cwd
+.gemini/
+.cursor/
+
+# Drawio backup files
+*.drawio.bkp
+
+# Local Svelte preview (screenshot prototypes)
+preview/
+
+# Read-only gitbox reference clone (per AGENTS.md)
+gitbox/

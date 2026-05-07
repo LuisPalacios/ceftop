@@ -1,0 +1,64 @@
+:root {
+	--bg: #0b1220;
+	--bg-elevated: #131b2c;
+	--border: #1f2a44;
+	--fg: #e2e8f0;
+	--fg-muted: #94a3b8;
+	--accent: #34d399;
+	--header: #67e8f9;
+	--warn: #fbbf24;
+	--danger: #f87171;
+	--font-sans: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
+		"Oxygen", "Ubuntu", "Cantarell", "Helvetica Neue", sans-serif;
+	--font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono",
+		Consolas, "Liberation Mono", monospace;
+}
+
+@font-face {
+	font-family: "Nunito";
+	font-style: normal;
+	font-weight: 400;
+	src: local(""),
+		url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
+}
+
+html,
+body {
+	margin: 0;
+	padding: 0;
+	background: var(--bg);
+	color: var(--fg);
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
+}
+
+#app {
+	height: 100vh;
+	overflow: hidden;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+button {
+	font-family: inherit;
+}
+
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+::-webkit-scrollbar-track {
+	background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--bg-elevated);
+	border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--border);
+}

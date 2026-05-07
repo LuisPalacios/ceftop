@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="CefTop" xmlns:bx="https://boxy-svg.com">
+  <defs>
+    <bx:export>
+      <bx:file format="png" path="CefTop.png" width="1024" height="1024"/>
+    </bx:export>
+  </defs>
+  <title>CefTop</title>
+  <rect width="242.138" height="242.138" rx="48" fill="#0b1220" x="6.931" y="6.355" style="stroke-width: 0.946;"/>
+  <circle cx="130.383" cy="63.252" r="56.529" fill="url(#rootGlow)" style="stroke-width: 1.204; fill-opacity: 0.94;"/>
+  <g fill="none" stroke-width="8" stroke-linecap="round" opacity="0.55" transform="matrix(1.203598, 0, 0, 1.203598, -23.67756, -33.036764)">
+    <path d="M128 100 C 128 140, 64 150, 64 184" stroke="#f59e0b"/>
+    <path d="M128 100 L 128 184" stroke="#ec4899"/>
+    <path d="M128 100 C 128 140, 192 150, 192 184" stroke="#0d9488"/>
+  </g>
+  <circle cx="130.383" cy="63.252" r="31.293" fill="#34d399" style="stroke-width: 1.204;"/>
+  <circle cx="130.383" cy="63.252" r="12.036" fill="#0b1220" style="stroke-width: 1.204;"/>
+  <circle cx="53.353" cy="198.054" r="24.072" fill="#f59e0b" style="stroke-width: 1.204;"/>
+  <circle cx="130.383" cy="198.054" r="24.072" fill="#ec4899" style="stroke-width: 1.204;"/>
+  <circle cx="207.414" cy="198.054" r="24.072" fill="#0d9488" style="stroke-width: 1.204;"/>
+  <radialGradient id="rootGlow" cx="50%" cy="50%" r="50%" gradientTransform="matrix(0.841651, 0, 0, 1, 0.079175, 0)">
+    <stop offset="0" stop-color="#34d399" stop-opacity="0.35"/>
+    <stop offset="1" stop-color="#34d399" style="stop-opacity: 0;"/>
+  </radialGradient>
+</svg>
