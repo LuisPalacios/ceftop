@@ -215,6 +215,63 @@ func TestGopsutilProvider_FindsCurrentProcess(t *testing.T) {
 	}
 }
 
+func TestAssembleTree_InfersCrashpadRoleFromBinaryName(t *testing.T) {
+	// Upstream Crashpad's standalone handler runs without --type= and with
+	// a binary name that doesn't match the target. ExtractRole alone would
+	// label it RoleMain (a duplicate "Main / Browser" row); the basename
+	// fallback in assembleTree must catch it and emit RoleCrashpad.
+	raws := []RawProcess{
+		{PID: 100, PPID: 1, Name: "sumwall.browser", Cmdline: "sumwall.browser"},
+		{PID: 102, PPID: 100, Name: "crashpad_handler.exe", Cmdline: "crashpad_handler.exe --initial-client-data=0,1,2"},
+	}
+	snap := assembleTree(raws, "sumwall.browser", testTime)
+	if len(snap.Roots) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(snap.Roots))
+	}
+	root := snap.Roots[0]
+	if root.Role != RoleMain {
+		t.Errorf("root role = %q, want %q", root.Role, RoleMain)
+	}
+	if len(root.Children) != 1 {
+		t.Fatalf("expected 1 child, got %d", len(root.Children))
+	}
+	if root.Children[0].Role != RoleCrashpad {
+		t.Errorf("crashpad child role = %q, want %q", root.Children[0].Role, RoleCrashpad)
+	}
+}
+
+func TestAssembleTree_DoesNotOverrideTargetMainRole(t *testing.T) {
+	// The target's own main process must stay RoleMain even though its
+	// basename matches the target (the inference guard kicks in only for
+	// non-target binaries).
+	raws := []RawProcess{
+		{PID: 100, PPID: 1, Name: "app.exe", Cmdline: "app.exe"},
+	}
+	snap := assembleTree(raws, "app", testTime)
+	if snap.Roots[0].Role != RoleMain {
+		t.Errorf("root role = %q, want %q", snap.Roots[0].Role, RoleMain)
+	}
+}
+
+func TestInferRoleFromName(t *testing.T) {
+	cases := []struct {
+		name string
+		want Role
+	}{
+		{"crashpad_handler.exe", RoleCrashpad},
+		{"chrome_crashpad_handler.exe", RoleCrashpad},
+		{"CRASHPAD_HANDLER", RoleCrashpad},
+		{"renderer.exe", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := InferRoleFromName(c.name)
+		if got != c.want {
+			t.Errorf("InferRoleFromName(%q) = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestAssembleTree_PropagatesCPUTime(t *testing.T) {
 	raws := []RawProcess{
 		{PID: 100, PPID: 1, Name: "app.exe", Cmdline: "app.exe", CPUSeconds: 1.234},

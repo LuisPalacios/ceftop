@@ -31,10 +31,19 @@ type RawProcess struct {
 	CPUSeconds float64
 }
 
-// Provider enumerates processes that match a target executable name.
-// The contract: a non-empty target restricts the result to processes whose
-// basename (case-insensitive, with any ".exe" suffix stripped) equals the
-// target's normalized form. An empty target returns every process.
+// Provider enumerates the processes that belong to a target's subtree.
+//
+// For a non-empty target the result includes every process whose basename
+// (case-insensitive, with any ".exe" suffix stripped) equals the target's
+// normalized form, plus every transitive OS-level child by PPID. Helpers
+// whose binary name differs from the target — e.g. an externally-named
+// crashpad_handler launched via plain CreateProcess by upstream Crashpad —
+// and helpers that do not carry a Chromium --type=<role> flag are still
+// included; the OS-level parent / child relationship is the source of
+// truth, not the binary name or the command-line role flag.
+//
+// An empty target returns every process on the host — that's the "give me
+// everything" path DiscoverApps relies on.
 //
 // Errors should be transient — the caller is expected to retry on the next
 // tick rather than treating a failure as fatal.

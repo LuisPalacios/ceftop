@@ -38,13 +38,25 @@ func BuildSnapshot(provider Provider, target string) (*ProcessSnapshot, error) {
 func assembleTree(raws []RawProcess, target string, capturedAt time.Time) *ProcessSnapshot {
 	nodes := make(map[int32]*ProcessNode, len(raws))
 	pids := make(map[int32]struct{}, len(raws))
+	wantTarget := NormalizeTargetName(target)
 
 	for _, r := range raws {
 		pids[r.PID] = struct{}{}
+		role := ExtractRole(r.Cmdline)
+		// A helper whose cmdline is silent about --type= but whose binary
+		// is clearly not the target's main (e.g. upstream Crashpad's
+		// crashpad_handler.exe) would otherwise render as a duplicate
+		// "Main / Browser" row. Probe the basename for a known helper
+		// convention before giving up and leaving it as RoleMain.
+		if role == RoleMain && NormalizeTargetName(r.Name) != wantTarget {
+			if inferred := InferRoleFromName(r.Name); inferred != "" {
+				role = inferred
+			}
+		}
 		nodes[r.PID] = &ProcessNode{
 			PID:       r.PID,
 			PPID:      r.PPID,
-			Role:      ExtractRole(r.Cmdline),
+			Role:      role,
 			Name:      r.Name,
 			Threads:   r.Threads,
 			MemMB:     bytesToMB(r.MemRSS),

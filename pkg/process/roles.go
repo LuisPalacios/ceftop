@@ -1,6 +1,9 @@
 package process
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // Role is the Chromium architectural role of a process. Values are returned
 // verbatim from the --type=<role> flag, with one synthetic value
@@ -43,4 +46,22 @@ func ExtractRole(cmdline string) Role {
 		return RoleMain
 	}
 	return Role(m[1])
+}
+
+// InferRoleFromName classifies a helper that does not advertise itself with a
+// Chromium --type= flag. Upstream Crashpad's standalone handler is the
+// motivating case: it ships as crashpad_handler(.exe) and runs without
+// --type=crashpad-handler, so the cmdline-based ExtractRole has no signal.
+//
+// Returns the empty string when the basename does not match any known
+// helper convention; callers should treat that as "fall back to RoleMain".
+func InferRoleFromName(name string) Role {
+	base := NormalizeTargetName(name)
+	if base == "" {
+		return ""
+	}
+	if strings.Contains(base, "crashpad") {
+		return RoleCrashpad
+	}
+	return ""
 }
