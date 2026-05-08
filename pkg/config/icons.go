@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -16,6 +17,10 @@ const PrivateIconPrefix = "app-"
 // the bundled icons are also SVG, and keeping a single format avoids the
 // guesswork around mime-types in the data URI.
 const PrivateIconExt = ".svg"
+
+// PrivateIconDefaultKey is the reserved <name> used as the icon fallback by
+// the frontend resolver. It must never surface as a selectable app.
+const PrivateIconDefaultKey = "default"
 
 // LoadPrivateIcons walks the directory that contains the config JSON and
 // returns a map of <name> → data URI for every "app-<name>.svg" file found.
@@ -53,5 +58,46 @@ func LoadPrivateIcons(configDir string) (map[string]string, error) {
 		}
 		out[key] = "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(data)
 	}
+	return out, nil
+}
+
+// PrivateIconNames returns the <name> portion of every "app-<name>.svg" file
+// in configDir, sorted and de-duplicated. Used to surface user-declared apps
+// in the discovery bar even when no matching process is currently running —
+// dropping a file like "app-sumwall.browser.svg" alongside the config JSON
+// is the canonical way to register a personal CEF app. The reserved
+// "default" key (icon fallback) is excluded.
+func PrivateIconNames(configDir string) ([]string, error) {
+	if configDir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, PrivateIconPrefix) || !strings.HasSuffix(name, PrivateIconExt) {
+			continue
+		}
+		key := strings.TrimSuffix(strings.TrimPrefix(name, PrivateIconPrefix), PrivateIconExt)
+		if key == "" || key == PrivateIconDefaultKey {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	sort.Strings(out)
 	return out, nil
 }

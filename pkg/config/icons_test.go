@@ -68,3 +68,53 @@ func keysOf(m map[string]string) []string {
 	}
 	return out
 }
+
+func TestPrivateIconNamesSortedAndFiltered(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite := func(name string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("<svg/>"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	mustWrite("app-sumwall.browser.svg")
+	mustWrite("app-chrome.svg")
+	mustWrite("app-default.svg") // reserved fallback — must be excluded
+	mustWrite("app-.svg")        // empty key — must be excluded
+	mustWrite("readme.txt")      // unrelated — must be excluded
+	mustWrite("ceftop.json")     // unrelated — must be excluded
+
+	got, err := PrivateIconNames(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"chrome", "sumwall.browser"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d (%v), want %d (%v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestPrivateIconNamesMissingDir(t *testing.T) {
+	got, err := PrivateIconNames(filepath.Join(t.TempDir(), "missing"))
+	if err != nil {
+		t.Fatalf("missing dir should not error, got: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty slice, got %v", got)
+	}
+}
+
+func TestPrivateIconNamesEmptyConfigDir(t *testing.T) {
+	got, err := PrivateIconNames("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty slice, got %v", got)
+	}
+}
