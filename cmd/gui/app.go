@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -158,12 +159,50 @@ func (a *App) emitDiscovery() {
 	if a.ctx == nil {
 		return
 	}
-	apps, err := process.DiscoverApps(a.provider)
+	apps, err := a.discoverAppsMerged()
 	if err != nil {
 		wailsrt.EventsEmit(a.ctx, eventDiscoveryError, err.Error())
 		return
 	}
 	wailsrt.EventsEmit(a.ctx, eventDiscovery, apps)
+}
+
+// discoverAppsMerged combines live host discovery with names declared by
+// user-supplied "app-<name>.svg" files in the config directory. Names that
+// exist as icons but have no running process show up with ChildCount == 0
+// so the user can still pick them as targets — useful for an app the user
+// only launches occasionally, or one that's currently down.
+func (a *App) discoverAppsMerged() ([]process.DiscoveredApp, error) {
+	apps, err := process.DiscoverApps(a.provider)
+	if err != nil {
+		return nil, err
+	}
+
+	a.mu.Lock()
+	dir := filepath.Dir(a.cfgPath)
+	a.mu.Unlock()
+
+	names, iconErr := config.PrivateIconNames(dir)
+	if iconErr != nil {
+		log.Println("[ceftop] private icon names:", iconErr)
+		return apps, nil
+	}
+	if len(names) == 0 {
+		return apps, nil
+	}
+
+	seen := make(map[string]struct{}, len(apps))
+	for _, app := range apps {
+		seen[app.Name] = struct{}{}
+	}
+	for _, n := range names {
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		apps = append(apps, process.DiscoveredApp{Name: n, ChildCount: 0})
+	}
+	sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
+	return apps, nil
 }
 
 func (a *App) loadConfig() {
@@ -333,11 +372,13 @@ func (a *App) KillProcess(pid int) process.KillResult {
 // DiscoverApps scans every process on the host, identifies the
 // CEF / Chromium / Electron applications currently running (any process
 // tree containing children with --type=<role> flags), and returns one
-// entry per distinct browser process. The frontend uses this for the
-// one-shot pull at mount time; subsequent updates arrive on the
-// "discovery" event emitted by discoveryLoop.
+// entry per distinct browser process. User-declared apps (any
+// "app-<name>.svg" next to the config JSON) are merged in with
+// ChildCount == 0 so they remain selectable when not running. The
+// frontend uses this for the one-shot pull at mount time; subsequent
+// updates arrive on the "discovery" event emitted by discoveryLoop.
 func (a *App) DiscoverApps() ([]process.DiscoveredApp, error) {
-	return process.DiscoverApps(a.provider)
+	return a.discoverAppsMerged()
 }
 
 // GetPrivateIcons returns user-supplied SVG icons that live alongside the

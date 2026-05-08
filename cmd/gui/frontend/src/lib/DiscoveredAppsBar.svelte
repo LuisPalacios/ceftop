@@ -44,11 +44,14 @@
 				class="apps-item"
 				class:active={cfg?.appName === app.name}
 				class:busy={switching === app.name}
+				class:offline={app.childCount === 0}
 				on:click={() => pick(app)}
 				disabled={switching !== "" && switching !== app.name}
-				title={app.childCount === 1
-					? `${app.name} — 1 child`
-					: `${app.name} — ${app.childCount} children`}
+				title={app.childCount === 0
+					? `${app.name} — not running`
+					: app.childCount === 1
+						? `${app.name} — 1 child`
+						: `${app.name} — ${app.childCount} children`}
 			>
 				<img
 					class="apps-icon"
@@ -103,6 +106,14 @@
 	}
 	.apps-item.busy {
 		opacity: 0.7;
+	}
+	.apps-item.offline .apps-icon {
+		filter: grayscale(1);
+		opacity: 0.55;
+	}
+	.apps-item.offline.active .apps-icon {
+		filter: none;
+		opacity: 1;
 	}
 	.apps-icon {
 		width: 1.5rem;
