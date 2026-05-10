@@ -114,4 +114,4 @@ git push --tags
 
 ## License
 
-Not yet declared.
+[MIT](LICENSE)
