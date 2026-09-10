@@ -145,8 +145,13 @@ type Monitor struct {
 	provider Provider
 	numCPU   float64
 
-	mu   sync.Mutex
-	prev map[int32]cpuSample
+	mu sync.Mutex
+	// target is the trimmed target the prev samples were taken for. A
+	// change of target discards them: a PID that survives a switch (the
+	// same app under a different spelling, or A→B→A within one tick) would
+	// otherwise be diffed against a sample from before the switch.
+	target string
+	prev   map[int32]cpuSample
 }
 
 // NewMonitor returns a Monitor that uses the supplied Provider. NumCPU is
@@ -171,11 +176,13 @@ func NewMonitor(p Provider) *Monitor {
 //
 // An empty target clears the sample state and returns an empty snapshot —
 // matching BuildSnapshot's onboarding contract — so the next non-empty tick
-// starts fresh instead of comparing against stale values.
+// starts fresh instead of comparing against stale values. A change of
+// target likewise starts fresh: the first tick after a switch reports 0 %.
 func (m *Monitor) Snapshot(target string) (*ProcessSnapshot, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		m.mu.Lock()
+		m.target = ""
 		m.prev = map[int32]cpuSample{}
 		m.mu.Unlock()
 		return &ProcessSnapshot{Target: "", Roots: nil, Captured: time.Now(), Total: 0}, nil
@@ -188,6 +195,10 @@ func (m *Monitor) Snapshot(target string) (*ProcessSnapshot, error) {
 	now := time.Now()
 
 	m.mu.Lock()
+	if m.target != target {
+		m.target = target
+		m.prev = map[int32]cpuSample{}
+	}
 	next := make(map[int32]cpuSample, len(raws))
 	pcts := make(map[int32]float64, len(raws))
 	for _, r := range raws {

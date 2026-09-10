@@ -360,4 +360,32 @@ func TestMonitor_EmptyTargetResetsState(t *testing.T) {
 	}
 }
 
+func TestMonitor_TargetChangeResetsState(t *testing.T) {
+	// The fake ignores the target, so PID 100 survives the switch — exactly
+	// the case where a stale sample would otherwise leak into the new
+	// target's first tick.
+	provider := &fakeProvider{snapshots: [][]RawProcess{
+		{{PID: 100, PPID: 1, Name: "app.exe", Cmdline: "app.exe", CPUSeconds: 0.0}},
+		{{PID: 100, PPID: 1, Name: "app.exe", Cmdline: "app.exe", CPUSeconds: 5.0}},
+	}}
+	m := NewMonitor(provider)
+	if _, err := m.Snapshot("app"); err != nil {
+		t.Fatalf("first Snapshot: %v", err)
+	}
+	m.mu.Lock()
+	for pid, s := range m.prev {
+		s.at = s.at.Add(-1 * time.Second)
+		m.prev[pid] = s
+	}
+	m.mu.Unlock()
+
+	snap, err := m.Snapshot("other")
+	if err != nil {
+		t.Fatalf("Snapshot after switch: %v", err)
+	}
+	if got := snap.Roots[0].CPUPercent; got != 0 {
+		t.Errorf("CPUPercent on first tick after target change = %v, want 0", got)
+	}
+}
+
 var testTime = time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)

@@ -320,27 +320,15 @@
 			discoveredAppsStore.set([]);
 		});
 
-		// Pull the first snapshot synchronously. The backend's snapshotLoop
-		// emits an event immediately at startup, but Wails events are fire-
-		// and-forget — the emit happens before this onMount has wired the
-		// subscription, so without this pull the user would wait one full
-		// tick interval (up to 999 s with hand-edited config) for the first
-		// paint. Errors are swallowed: the next ticker emit will populate.
+		// Subscriptions are wired; tell the backend so it emits the first
+		// snapshot and discovery scan now. Wails events are fire-and-forget,
+		// so the backend deliberately does not emit at startup (nobody is
+		// listening yet) and instead waits for this signal. Without it the
+		// user would wait one full tick interval (up to 999 s with hand-
+		// edited config) for the first paint. Errors are swallowed: the
+		// next ticker emit will populate.
 		try {
-			const snap = await bridge.snapshot();
-			snapshotStore.set(snap);
-			snapshotErrorStore.set("");
-			lastUpdateAtStore.set(Date.now());
-			scheduleFit();
-		} catch {
-			/* ignore — next tick will refill */
-		}
-
-		// Same fire-and-forget race for discovery — pull once so the toggle
-		// button lights up on first paint instead of after the 5 s tick.
-		try {
-			const apps = await bridge.discoverApps();
-			discoveredAppsStore.set(apps ?? []);
+			await bridge.frontendReady();
 		} catch {
 			/* ignore — next tick will refill */
 		}

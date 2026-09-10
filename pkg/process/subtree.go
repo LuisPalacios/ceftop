@@ -4,11 +4,10 @@ import "strings"
 
 // procRef is the minimal per-process record needed to attribute a process to
 // the target's subtree: identity, parentage, and binary basename. It exists
-// so the gopsutil provider can do a cheap first-pass enumeration before
-// paying for the expensive lookups (cmdline, memory, CPU) on the target's
-// subtree only — on Windows those lookups call NtQueryInformationProcess
-// and read the PEB, and the cost adds up quickly when there are hundreds of
-// processes on the host.
+// so the provider can do a cheap first-pass enumeration (see enumerateLite)
+// before paying for the per-PID lookups (cmdline, memory, CPU) on the
+// target's subtree only — each of those opens a process handle, and the
+// cost adds up when there are hundreds of processes on the host.
 type procRef struct {
 	PID  int32
 	PPID int32

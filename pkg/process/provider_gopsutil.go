@@ -1,31 +1,70 @@
 package process
 
 import (
-	"fmt"
+	"sync"
+	"time"
 
 	psprocess "github.com/shirou/gopsutil/v4/process"
 )
 
-// GopsutilProvider is the production Provider, backed by
-// github.com/shirou/gopsutil/v4/process. It delegates per-platform process
-// enumeration to gopsutil's already-portable layer:
+// liteCacheTTL bounds how long one host-wide enumeration pass is reused by
+// a second Snapshot call. The snapshot loop and the discovery loop fire at
+// the same instant on FrontendReady and whenever their tickers coincide;
+// the window is wide enough to cover that and narrow enough that a process
+// spawned between two genuinely separate ticks is never missed.
+const liteCacheTTL = 100 * time.Millisecond
+
+// GopsutilProvider is the production Provider. Host-wide enumeration goes
+// through the platform-specific enumerateLite (one Toolhelp walk on
+// Windows, gopsutil's /proc and sysctl readers elsewhere); the per-process
+// telemetry for the target's subtree is read with
+// github.com/shirou/gopsutil/v4/process:
 //
-//   - Linux:   /proc/<pid>/{stat,cmdline,status}
-//   - macOS:   sysctl + KERN_PROCARGS2
-//   - Windows: NtQueryInformationProcess + PEB read for cmdline
+//   - Linux:   /proc/<pid>/{stat,cmdline,statm}
+//   - macOS:   sysctl + KERN_PROCARGS2, proc_pidinfo
+//   - Windows: OpenProcess + PEB read for cmdline, GetProcessMemoryInfo,
+//     GetProcessTimes
 //
 // All three preserve the --type=<role> argument intact, which is the
 // load-bearing assumption for the role parser. If a future gopsutil release
 // breaks that on a platform, swap this implementation for a platform-specific
 // reader behind the same Provider interface.
-type GopsutilProvider struct{}
+type GopsutilProvider struct {
+	// enumerate and now are swappable so tests can count passes and drive
+	// the cache clock without touching the OS.
+	enumerate func() ([]liteProc, error)
+	now       func() time.Time
+
+	mu       sync.Mutex
+	cachedAt time.Time
+	cached   []liteProc
+}
 
 // NewGopsutilProvider returns a Provider ready to enumerate processes. The
-// type carries no state; the constructor exists for API symmetry with future
-// providers (e.g. a fake provider for tests, a sampling provider for perf
-// tuning).
+// only state it carries is the short-lived enumeration cache; see
+// liteCacheTTL.
 func NewGopsutilProvider() *GopsutilProvider {
-	return &GopsutilProvider{}
+	return &GopsutilProvider{enumerate: enumerateLite, now: time.Now}
+}
+
+// lites returns the host-wide enumeration pass, reusing the previous one
+// when it is younger than liteCacheTTL. The slice is shared read-only
+// between callers; nothing downstream mutates it.
+func (p *GopsutilProvider) lites() ([]liteProc, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	now := p.now()
+	if !p.cachedAt.IsZero() && now.Sub(p.cachedAt) < liteCacheTTL {
+		return p.cached, nil
+	}
+	lites, err := p.enumerate()
+	if err != nil {
+		return nil, err
+	}
+	p.cached = lites
+	p.cachedAt = now
+	return lites, nil
 }
 
 // Snapshot enumerates the host's processes and returns the target's subtree:
@@ -38,51 +77,44 @@ func NewGopsutilProvider() *GopsutilProvider {
 // path DiscoverApps relies on.
 //
 // Two phases keep the per-tick cost bounded on hosts with hundreds of
-// processes: a cheap pass collects PID / PPID / basename for everyone so
-// the subtree can be computed, then the expensive lookups (cmdline, memory,
-// thread count, CPU times) are issued only for the kept PIDs. On Windows
-// each Cmdline call is an NtQueryInformationProcess + PEB read; doing that
-// for every process every tick was the dominant cost before this split.
+// processes: the platform enumeration pass (see lites) collects PID / PPID /
+// basename for everyone so the subtree can be computed, then the per-PID
+// lookups (cmdline, memory, thread count, CPU times) are issued only for the
+// kept PIDs. Process handles are built directly from the PID rather than via
+// psprocess.NewProcess, which would add an existence probe and a creation-
+// time read per process for no benefit here.
 //
 // Per-process errors (process gone, permission denied) are silently skipped
 // — Snapshot is called on a tick and a short-lived enumeration error must
 // not corrupt the tree.
 func (p *GopsutilProvider) Snapshot(target string) ([]RawProcess, error) {
-	procs, err := psprocess.Processes()
+	lites, err := p.lites()
 	if err != nil {
-		return nil, fmt.Errorf("enumerating processes: %w", err)
+		return nil, err
 	}
 
-	type lite struct {
-		proc *psprocess.Process
-		ref  procRef
+	refs := make([]procRef, len(lites))
+	for i := range lites {
+		refs[i] = lites[i].procRef
 	}
-	lites := make([]lite, 0, len(procs))
-	refs := make([]procRef, 0, len(procs))
-	for _, pr := range procs {
-		name, err := pr.Name()
-		if err != nil {
-			continue
-		}
-		ppid, _ := pr.Ppid()
-		ref := procRef{PID: pr.Pid, PPID: ppid, Name: name}
-		lites = append(lites, lite{proc: pr, ref: ref})
-		refs = append(refs, ref)
-	}
-
 	keep := selectSubtreePIDs(refs, target)
 
 	out := make([]RawProcess, 0, len(keep))
 	for _, l := range lites {
-		if _, ok := keep[l.ref.PID]; !ok {
+		if _, ok := keep[l.PID]; !ok {
 			continue
 		}
+		pr := &psprocess.Process{Pid: l.PID}
 
-		cmdline, _ := l.proc.Cmdline()
-		threads, _ := l.proc.NumThreads()
+		cmdline, _ := pr.Cmdline()
+
+		threads := l.Threads
+		if !enumerationReportsThreads {
+			threads, _ = pr.NumThreads()
+		}
 
 		var rss uint64
-		if mem, err := l.proc.MemoryInfo(); err == nil && mem != nil {
+		if mem, err := pr.MemoryInfo(); err == nil && mem != nil {
 			rss = mem.RSS
 		}
 
@@ -90,14 +122,14 @@ func (p *GopsutilProvider) Snapshot(target string) ([]RawProcess, error) {
 		// caller can't introspect; treat that as zero CPU rather than skipping
 		// the row entirely (we still want to display PID / role / mem).
 		var cpuSec float64
-		if t, err := l.proc.Times(); err == nil && t != nil {
+		if t, err := pr.Times(); err == nil && t != nil {
 			cpuSec = t.User + t.System
 		}
 
 		out = append(out, RawProcess{
-			PID:        l.ref.PID,
-			PPID:       l.ref.PPID,
-			Name:       l.ref.Name,
+			PID:        l.PID,
+			PPID:       l.PPID,
+			Name:       l.Name,
 			Cmdline:    cmdline,
 			Threads:    threads,
 			MemRSS:     rss,

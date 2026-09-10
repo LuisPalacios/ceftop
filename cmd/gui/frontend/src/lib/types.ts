@@ -23,7 +23,6 @@ export interface ProcessNode {
 	memMB: number;
 	cpuPercent: number; // 0..100, share of total CPU capacity over the last tick
 	cpuTimeMs: number; // accumulated CPU time since process start
-	cmdline?: string;
 	children?: ProcessNode[];
 }
 

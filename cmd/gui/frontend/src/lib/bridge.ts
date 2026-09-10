@@ -8,13 +8,12 @@ import {
 	SetTargetApp,
 	SetTickInterval,
 	OpenConfigInEditor,
-	Snapshot,
 	KillProcess,
-	DiscoverApps,
 	GetAppVersion,
 	WindowSetSize,
 	WindowGetSize,
 	Log,
+	FrontendReady,
 } from "../../wailsjs/go/main/App";
 import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime";
 
@@ -31,13 +30,14 @@ export const bridge = {
 	setTargetApp: (name: string): Promise<void> => SetTargetApp(name),
 	setTickInterval: (seconds: number): Promise<void> => SetTickInterval(seconds),
 	openConfigInEditor: (): Promise<void> => OpenConfigInEditor(),
-	snapshot: (): Promise<ProcessSnapshot> => Snapshot() as unknown as Promise<ProcessSnapshot>,
 	killProcess: (pid: number): Promise<KillResult> => KillProcess(pid) as unknown as Promise<KillResult>,
-	discoverApps: (): Promise<DiscoveredApp[]> => DiscoverApps() as unknown as Promise<DiscoveredApp[]>,
 	getAppVersion: (): Promise<string> => GetAppVersion(),
 	windowSetSize: (width: number, height: number): Promise<void> => WindowSetSize(width, height),
 	windowGetSize: (): Promise<[number, number]> => WindowGetSize() as unknown as Promise<[number, number]>,
 	log: (msg: string): Promise<void> => Log(msg),
+	// Signals that event subscriptions are wired; the backend answers with
+	// an immediate snapshot + discovery emit instead of the next tick.
+	frontendReady: (): Promise<void> => FrontendReady(),
 
 	onSnapshot: (handler: (snap: ProcessSnapshot) => void): (() => void) => {
 		EventsOn("snapshot", handler as (...args: unknown[]) => void);

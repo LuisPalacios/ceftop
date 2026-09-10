@@ -5,6 +5,8 @@ import {process} from '../models';
 
 export function DiscoverApps():Promise<Array<main.DiscoveredAppView>>;
 
+export function FrontendReady():Promise<void>;
+
 export function GetAppVersion():Promise<string>;
 
 export function GetConfig():Promise<main.ConfigState>;

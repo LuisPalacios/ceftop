@@ -65,6 +65,18 @@ type App struct {
 	// launch. Buffered(1) so the API call never blocks; if the loop is busy
 	// and the channel is full, the in-flight value still wins on next read.
 	intervalChange chan time.Duration
+
+	// refresh asks the snapshot loop for an out-of-band tick. SetTargetApp
+	// pushes here so the new target's tree lands immediately instead of
+	// after the remainder of the current interval, and FrontendReady pushes
+	// here for the first paint. Buffered(1): a second request while one is
+	// pending is redundant and is dropped.
+	refresh chan struct{}
+
+	// discoveryRefresh is the discovery loop's counterpart of refresh.
+	// FrontendReady pushes here so the apps bar is populated on first paint
+	// instead of after the first discoveryInterval.
+	discoveryRefresh chan struct{}
 }
 
 // NewApp creates a new App instance. iconFS is the embedded bundled-icon
@@ -72,12 +84,14 @@ type App struct {
 func NewApp(iconFS fs.FS) *App {
 	provider := process.NewGopsutilProvider()
 	return &App{
-		cfgPath:        config.DefaultPath(),
-		provider:       provider,
-		monitor:        process.NewMonitor(provider),
-		iconFS:         iconFS,
-		quit:           make(chan struct{}),
-		intervalChange: make(chan time.Duration, 1),
+		cfgPath:          config.DefaultPath(),
+		provider:         provider,
+		monitor:          process.NewMonitor(provider),
+		iconFS:           iconFS,
+		quit:             make(chan struct{}),
+		intervalChange:   make(chan time.Duration, 1),
+		refresh:          make(chan struct{}, 1),
+		discoveryRefresh: make(chan struct{}, 1),
 	}
 }
 
@@ -119,12 +133,18 @@ func (a *App) shutdown(_ context.Context) {
 	})
 }
 
-// snapshotLoop emits a snapshot immediately at startup and then on each tick
-// of the configured interval. The interval can be re-tuned at runtime via
-// the intervalChange channel — SetTickInterval pushes the new value here.
+// snapshotLoop emits a snapshot on each tick of the configured interval.
+// The interval can be re-tuned at runtime via the intervalChange channel —
+// SetTickInterval pushes the new value here — and an out-of-band tick can
+// be requested via refresh. A refresh restarts the ticker so the next
+// regular tick is a full interval away, rather than landing right behind
+// the refreshed one.
+//
+// There is deliberately no emit at loop start: Wails events are fire-and-
+// forget and the frontend has not subscribed yet when startup runs, so an
+// early emit would only be wasted work. The first paint is driven by
+// FrontendReady instead.
 func (a *App) snapshotLoop() {
-	a.emitSnapshot()
-
 	a.mu.Lock()
 	interval := a.cfg.TickInterval()
 	a.mu.Unlock()
@@ -136,17 +156,33 @@ func (a *App) snapshotLoop() {
 		select {
 		case <-a.quit:
 			return
-		case newInterval := <-a.intervalChange:
-			ticker.Reset(newInterval)
+		case interval = <-a.intervalChange:
+			ticker.Reset(interval)
+		case <-a.refresh:
+			a.emitSnapshot()
+			ticker.Reset(interval)
 		case <-ticker.C:
 			a.emitSnapshot()
 		}
 	}
 }
 
+// requestRefresh asks snapshotLoop for an immediate tick without blocking
+// the caller. A request that finds one already queued is dropped: the
+// pending tick will read the latest config anyway.
+func (a *App) requestRefresh() {
+	select {
+	case a.refresh <- struct{}{}:
+	default:
+	}
+}
+
 // emitSnapshot takes one snapshot and forwards it to the frontend. A failed
 // snapshot is published on the error event rather than silently dropped, so
-// the UI can surface persistent enumeration failures.
+// the UI can surface persistent enumeration failures. A snapshot whose
+// target no longer matches the config — the user switched apps while it was
+// being taken — is discarded: the refresh queued by SetTargetApp is about to
+// replace it, and publishing it would flash the old tree under the new name.
 func (a *App) emitSnapshot() {
 	if a.ctx == nil {
 		return
@@ -156,15 +192,29 @@ func (a *App) emitSnapshot() {
 		wailsrt.EventsEmit(a.ctx, eventSnapshotError, err.Error())
 		return
 	}
+	if a.currentTarget() != snap.Target {
+		return
+	}
 	wailsrt.EventsEmit(a.ctx, eventSnapshot, snap)
 }
 
-// discoveryLoop emits a discovery scan immediately at startup and then on
-// each tick of discoveryInterval. It runs in its own goroutine so a slow
-// host enumeration cannot starve the snapshot loop (and vice versa).
-func (a *App) discoveryLoop() {
-	a.emitDiscovery()
+// currentTarget returns the configured target name, or "" during
+// onboarding. Trimmed the same way pkg/process trims it, so it compares
+// equal to ProcessSnapshot.Target.
+func (a *App) currentTarget() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(a.cfg.AppName)
+}
 
+// discoveryLoop emits a discovery scan on each tick of discoveryInterval and
+// on request via discoveryRefresh. It runs in its own goroutine so a slow
+// host enumeration cannot starve the snapshot loop (and vice versa). Like
+// snapshotLoop it does not emit at start; see FrontendReady.
+func (a *App) discoveryLoop() {
 	ticker := time.NewTicker(discoveryInterval)
 	defer ticker.Stop()
 
@@ -172,10 +222,34 @@ func (a *App) discoveryLoop() {
 		select {
 		case <-a.quit:
 			return
+		case <-a.discoveryRefresh:
+			a.emitDiscovery()
+			ticker.Reset(discoveryInterval)
 		case <-ticker.C:
 			a.emitDiscovery()
 		}
 	}
+}
+
+// requestDiscovery asks discoveryLoop for an immediate scan without
+// blocking the caller; a request that finds one already queued is dropped.
+func (a *App) requestDiscovery() {
+	select {
+	case a.discoveryRefresh <- struct{}{}:
+	default:
+	}
+}
+
+// FrontendReady is called by the frontend once its event subscriptions are
+// wired. It requests an immediate snapshot and discovery scan so the first
+// paint does not wait for the next scheduled tick. This replaces the
+// frontend pulling Snapshot() and DiscoverApps() itself, which duplicated
+// the loops' work and ran four host enumerations concurrently at startup.
+// Both loops fire within the same instant, so the provider's short-lived
+// enumeration cache lets the second one reuse the first one's walk.
+func (a *App) FrontendReady() {
+	a.requestRefresh()
+	a.requestDiscovery()
 }
 
 // emitDiscovery runs one discovery scan and forwards the result to the
@@ -288,8 +362,11 @@ func (a *App) GetConfig() ConfigState {
 	}
 }
 
-// SetTargetApp persists a new target executable name. An empty / whitespace
-// name is rejected; the tick interval is preserved across the rewrite.
+// SetTargetApp persists a new target executable name and asks the snapshot
+// loop for an immediate tick, so the new tree replaces the old one right
+// away instead of after the remainder of the current interval. An empty /
+// whitespace name is rejected; the tick interval is preserved across the
+// rewrite.
 func (a *App) SetTargetApp(name string) error {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -297,18 +374,20 @@ func (a *App) SetTargetApp(name string) error {
 	}
 
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	next := &config.Config{AppName: trimmed}
 	if a.cfg != nil {
 		next.TickIntervalSeconds = a.cfg.TickIntervalSeconds
 	}
 	next.Normalize()
 	if err := config.Save(a.cfgPath, next); err != nil {
+		a.mu.Unlock()
 		return err
 	}
 	a.cfg = next
 	a.cfgLoadError = ""
+	a.mu.Unlock()
+
+	a.requestRefresh()
 	return nil
 }
 
@@ -416,9 +495,9 @@ func (a *App) KillProcess(pid int) process.KillResult {
 // entry per distinct browser process, each with its icon resolved.
 // User-declared apps (any "app-<name>.svg" next to the config JSON) are
 // merged in with ChildCount == 0 so they remain selectable when not
-// running. The frontend uses this for the one-shot pull at mount time;
-// subsequent updates arrive on the "discovery" event emitted by
-// discoveryLoop.
+// running. The frontend receives this on the "discovery" event emitted by
+// discoveryLoop (first paint is triggered via FrontendReady); the binding
+// stays exported for ad-hoc callers and tooling.
 func (a *App) DiscoverApps() ([]DiscoveredAppView, error) {
 	return a.discoverAppsMerged()
 }

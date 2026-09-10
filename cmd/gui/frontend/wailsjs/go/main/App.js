@@ -6,6 +6,10 @@ export function DiscoverApps() {
   return window['go']['main']['App']['DiscoverApps']();
 }
 
+export function FrontendReady() {
+  return window['go']['main']['App']['FrontendReady']();
+}
+
 export function GetAppVersion() {
   return window['go']['main']['App']['GetAppVersion']();
 }

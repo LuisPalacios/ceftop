@@ -7,8 +7,12 @@
 //   - types.go            : DTOs and the Provider interface (this file).
 //   - roles.go            : --type= parsing and role constants.
 //   - monitor.go          : tree assembly from a flat Provider snapshot.
-//   - provider_gopsutil.go: cross-platform Provider implementation backed by
-//                           github.com/shirou/gopsutil/v4/process.
+//   - subtree.go          : target subtree selection by basename + PPID.
+//   - enumerate_*.go      : platform-native host-wide enumeration pass (one
+//     Toolhelp walk on Windows, gopsutil elsewhere).
+//   - provider_gopsutil.go: production Provider — enumerate_*.go for the host,
+//     github.com/shirou/gopsutil/v4/process for the per-PID telemetry of the
+//     kept subtree.
 //
 // The frontend never mutates ProcessSnapshot or ProcessNode in place; each
 // tick replaces the snapshot wholesale.
@@ -58,6 +62,10 @@ type Provider interface {
 // It is zero on the first tick after a process appears (no prior sample to
 // diff against) and stays zero for snapshots produced by stateless callers
 // such as BuildSnapshot. CPUTimeMs is total CPU time since process start.
+//
+// Cmdline is kept on the Go side for role extraction and tests but is not
+// serialized: the frontend never reads it, and Chromium command lines are
+// long enough that they made up ~80 % of every tick's event payload.
 type ProcessNode struct {
 	PID        int32          `json:"pid"`
 	PPID       int32          `json:"ppid"`
@@ -67,7 +75,7 @@ type ProcessNode struct {
 	MemMB      float64        `json:"memMB"`
 	CPUPercent float64        `json:"cpuPercent"`
 	CPUTimeMs  uint64         `json:"cpuTimeMs"`
-	Cmdline    string         `json:"cmdline,omitempty"`
+	Cmdline    string         `json:"-"`
 	Children   []*ProcessNode `json:"children,omitempty"`
 }
 

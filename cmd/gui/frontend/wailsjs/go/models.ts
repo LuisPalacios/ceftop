@@ -64,7 +64,6 @@ export namespace process {
 	    memMB: number;
 	    cpuPercent: number;
 	    cpuTimeMs: number;
-	    cmdline?: string;
 	    children?: ProcessNode[];
 	
 	    static createFrom(source: any = {}) {
@@ -81,7 +80,6 @@ export namespace process {
 	        this.memMB = source["memMB"];
 	        this.cpuPercent = source["cpuPercent"];
 	        this.cpuTimeMs = source["cpuTimeMs"];
-	        this.cmdline = source["cmdline"];
 	        this.children = this.convertValues(source["children"], ProcessNode);
 	    }
 	
