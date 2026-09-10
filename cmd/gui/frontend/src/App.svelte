@@ -16,7 +16,14 @@
 	import StatusBar from "./lib/StatusBar.svelte";
 	import Settings from "./lib/Settings.svelte";
 	import DiscoveredAppsBar from "./lib/DiscoveredAppsBar.svelte";
-	import { refreshTargetIcon } from "./lib/iconResolver";
+	import { refreshTargetIcon, targetIconStore, onIconError } from "./lib/iconResolver";
+	import { friendlyName } from "./lib/friendlyName";
+
+	// Monitored app, shown centred in the top bar so the eye lands on it
+	// straight away. Config-driven (not snapshot-driven) so it flips the
+	// instant the user picks another app, before the new tree arrives.
+	$: targetName = $configStore?.appName ?? "";
+	$: targetLabel = friendlyName(targetName);
 
 	// ── Window fit ──
 	// Height is fixed: room for the header, the optional apps / settings
@@ -184,7 +191,10 @@
 		// the tree and grows a spurious horizontal scrollbar too.
 		let w: number | null = null;
 		if (innerTree) {
-			w = Math.ceil(innerTree.scrollWidth);
+			// Bounding rect, not scrollWidth: the latter is rounded to whole
+			// px and can round DOWN, leaving a sub-pixel overflow that still
+			// draws a horizontal scrollbar. Ceil the fractional width.
+			w = Math.ceil(innerTree.getBoundingClientRect().width);
 			if (treePane && hOf(innerTree) > paneBudget + 0.5) {
 				const sb = treePane.offsetWidth - treePane.clientWidth;
 				w += sb > 0 ? sb : SCROLLBAR_PX;
@@ -273,7 +283,9 @@
 			if (wailsW <= 0) return; // nothing to measure and nothing known
 			targetW = wailsW;
 		} else {
-			targetW = Math.min(maxW, Math.max(MIN_WIDTH, Math.round(m.w * k + chromeW)));
+			// Ceil: a window a fraction of a px too narrow still gets a
+			// horizontal scrollbar; a fraction too wide is invisible.
+			targetW = Math.min(maxW, Math.max(MIN_WIDTH, Math.ceil(m.w * k + chromeW)));
 		}
 
 		// Pin the height at the OS level before resizing: Wails clamps
@@ -467,6 +479,17 @@
 				<img src="/logo.svg" alt="" class="brand-logo" />
 				<span>CefTop</span>
 			</h1>
+			<div class="header-target" title={targetName}>
+				{#if targetLabel}
+					<img
+						class="header-target-icon"
+						src={$targetIconStore}
+						alt=""
+						on:error={onIconError}
+					/>
+					<span class="header-target-name">{targetLabel}</span>
+				{/if}
+			</div>
 			<div class="header-actions">
 				<button
 					class="btn-gear"
@@ -514,13 +537,40 @@
 		height: 100vh;
 		overflow: hidden;
 	}
+	/* Three columns so the monitored app sits at the true centre of the
+	   bar regardless of how wide the brand and the action buttons are. */
 	header {
-		display: flex;
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
 		gap: 1rem;
 		padding: 0.6rem 1rem;
 		border-bottom: 1px solid var(--border);
 		flex-shrink: 0;
+	}
+	.header-target {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-width: 0;
+		justify-self: center;
+	}
+	/* rem so the icon zooms with the name (the brand logo stays fixed). */
+	.header-target-icon {
+		width: 2.5rem;
+		height: 2.5rem;
+		display: block;
+		flex-shrink: 0;
+		pointer-events: none;
+	}
+	.header-target-name {
+		font-family: var(--font-mono);
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: var(--fg);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	h1 {
 		font-size: 1.1rem;
@@ -539,7 +589,7 @@
 		display: block;
 	}
 	.header-actions {
-		margin-left: auto;
+		justify-self: end;
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;

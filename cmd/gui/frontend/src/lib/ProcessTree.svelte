@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { snapshotStore, snapshotErrorStore } from "./stores";
-	import { targetIconStore, onIconError } from "./iconResolver";
-	import { friendlyName } from "./friendlyName";
 	import ProcessNode from "./ProcessNode.svelte";
 	import type { ProcessNode as PNode } from "./types";
 
@@ -26,13 +24,9 @@
 	$: showToggle = depth > 0;
 	// Base width: toggle (1.25) + gap (0.4) + "[123456]" PID (~5rem) = 6.65,
 	// or just PID without the toggle gap = 5rem. Plus 1rem per nesting level.
-	// Also widen to fit the target name + 24px icon in the header row so long
-	// names like "msedgewebview2" don't crash into the Type column.
-	$: target = $snapshotStore?.target ?? "";
-	$: targetLabel = friendlyName(target);
-	$: targetMinRem = targetLabel.length * 0.5 + 2.5;
+	// The column title is a fixed "Process", which always fits in 5rem.
 	$: pidMinRem = (showToggle ? 6.65 : 5) + depth;
-	$: leftCol = `${Math.max(pidMinRem, targetMinRem)}rem`;
+	$: leftCol = `${pidMinRem}rem`;
 </script>
 
 {#if $snapshotErrorStore}
@@ -48,15 +42,7 @@
 {:else}
 	<div class="tree" style="--left-col: {leftCol}">
 		<div class="header-row">
-			<span class="header-target" title={target}>
-				<img
-					class="header-target-icon"
-					src={$targetIconStore}
-					alt=""
-					on:error={onIconError}
-				/>
-				<span class="header-target-name">{targetLabel}</span>
-			</span>
+			<span>Process</span>
 			<span>Type</span>
 			<span class="num">Thr</span>
 			<span class="num">Memory</span>
@@ -117,27 +103,6 @@
 		letter-spacing: 0.04em;
 		min-width: max-content;
 		align-items: center;
-	}
-	.header-target {
-		text-transform: none;
-		letter-spacing: 0;
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		min-width: 0;
-	}
-	.header-target-icon {
-		width: 24px;
-		height: 24px;
-		display: block;
-		flex-shrink: 0;
-		pointer-events: none;
-	}
-	.header-target-name {
-		font-size: 0.78rem;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 	.header-row .num {
 		justify-self: end;
