@@ -44,13 +44,12 @@ func main() {
 		Title:  "CefTop",
 		Width:  920,
 		Height: 640,
-		// Floor low enough that the frontend auto-fit can shrink to match
-		// content size. Previous 900x420 was a hard floor that left the
-		// window 100+ px wider than the rows actually needed (the row grid
-		// was retuned to be much tighter — ~588px at default zoom for a
-		// typical Chromium tree). The auto-fit clamps to monitor work area
-		// from above; this just stops the window from collapsing to 0 in
-		// pathological cases (empty target, layout glitch).
+		// Boot-time floor only. Once the monitor view is up, the frontend
+		// pins min and max height to its fixed 20-row budget and caps the
+		// width at the monitor's work area (see the window-fit section in
+		// App.svelte); MinWidth is mirrored there as MIN_WIDTH. This just
+		// stops the window from collapsing to 0 during onboarding or a
+		// layout glitch.
 		MinWidth:  200,
 		MinHeight: 150,
 		AssetServer: &assetserver.Options{

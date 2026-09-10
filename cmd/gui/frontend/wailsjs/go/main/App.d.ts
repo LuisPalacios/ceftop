@@ -27,4 +27,8 @@ export function Snapshot():Promise<process.ProcessSnapshot>;
 
 export function WindowGetSize():Promise<any>;
 
+export function WindowSetMaxSize(arg1:number,arg2:number):Promise<void>;
+
+export function WindowSetMinSize(arg1:number,arg2:number):Promise<void>;
+
 export function WindowSetSize(arg1:number,arg2:number):Promise<void>;

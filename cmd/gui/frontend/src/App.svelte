@@ -18,28 +18,131 @@
 	import DiscoveredAppsBar from "./lib/DiscoveredAppsBar.svelte";
 	import { refreshTargetIcon } from "./lib/iconResolver";
 
-	// ── Window auto-fit ──
-	// Width tracks content tightly on every snapshot tick / zoom / gear
-	// toggle. Height grows when content gets taller than the current window
-	// but never shrinks (so user-dragged extra space is preserved). Both
-	// axes are clamped at the OS level by main.go's MinWidth / MinHeight;
-	// the ceiling is the monitor work area so deep trees stay on-screen.
+	// ── Window fit ──
+	// Height is fixed: room for the header, the optional apps / settings
+	// panels, the status bar, the column header and exactly VISIBLE_ROWS
+	// tree rows. It changes only with zoom or a panel toggle, never with
+	// the process count — deeper trees scroll inside .tree-pane. The OS
+	// min and max height are pinned to that value so a drag cannot change
+	// it. Width still tracks the widest row (we cannot know how deep a tree
+	// will nest) between MIN_WIDTH and the monitor's work area; a tree wider
+	// than the screen scrolls horizontally inside .tree-pane.
+	const VISIBLE_ROWS = 20;
+	// Mirrors MinWidth in main.go. Outer size in the runtime's own units.
+	const MIN_WIDTH = 200;
 
-	// Sticky chrome delta. outerWidth/outerHeight occasionally read 0 right
-	// after a WindowSetSize (Wails Windows in particular). Once we get a sane
-	// reading we keep it — the OS title bar / borders don't change at runtime
-	// barring a DPI swap, which Wails would restart for anyway.
-	let chromeW = 0;
-	let chromeH = 0;
-	function chromeDelta(): { w: number; h: number } {
-		const dw = window.outerWidth - window.innerWidth;
-		const dh = window.outerHeight - window.innerHeight;
-		if (Number.isFinite(dw) && dw > 0 && dw < 200) chromeW = dw;
-		if (Number.isFinite(dh) && dh > 0 && dh < 200) chromeH = dh;
-		return { w: chromeW, h: chromeH };
+	// Row and column-header heights in rem, measured from the real DOM
+	// whenever rows are on screen and persisted, so the "no rows" states
+	// (waiting for a snapshot, target not running) and the next launch get
+	// the exact height instead of an estimate. Stored in rem so one value
+	// serves every zoom level. The fallbacks approximate the .row and
+	// .header-row layouts in ProcessNode.svelte / ProcessTree.svelte and
+	// only matter until the first tree has ever rendered.
+	const METRICS_KEY = "ceftop:rowmetrics";
+	// rowRem: height of one .row. rowsTopRem: distance from the top of
+	// .tree to the top of its first row (tree padding + column header +
+	// its margin). Both fractional, measured with getBoundingClientRect.
+	const FALLBACK_ROW_REM = 1.82;
+	const FALLBACK_ROWS_TOP_REM = 3.1;
+	// .tree padding-bottom.
+	const TREE_PADDING_BOTTOM_REM = 0.5;
+	// Matches ::-webkit-scrollbar width in style.css; used until the pane
+	// has actually shown a scrollbar we can measure.
+	const SCROLLBAR_PX = 10;
+
+	interface RowMetrics {
+		rowRem: number;
+		rowsTopRem: number;
 	}
 
-	function measureContentSize(): { w: number; h: number } | null {
+	function loadMetrics(): RowMetrics {
+		try {
+			const raw = localStorage.getItem(METRICS_KEY);
+			if (raw) {
+				const parsed = JSON.parse(raw) as Partial<RowMetrics>;
+				const rowRem = Number(parsed.rowRem);
+				const rowsTopRem = Number(parsed.rowsTopRem);
+				if (rowRem > 0 && rowRem < 10 && rowsTopRem > 0 && rowsTopRem < 10) {
+					return { rowRem, rowsTopRem };
+				}
+			}
+		} catch {
+			/* storage unavailable or corrupt — fall back */
+		}
+		return { rowRem: FALLBACK_ROW_REM, rowsTopRem: FALLBACK_ROWS_TOP_REM };
+	}
+
+	let metrics: RowMetrics = loadMetrics();
+
+	function saveMetrics() {
+		try {
+			localStorage.setItem(METRICS_KEY, JSON.stringify(metrics));
+		} catch {
+			/* private browsing or quota — ignore */
+		}
+	}
+
+	function remPx(): number {
+		const v = parseFloat(getComputedStyle(document.documentElement).fontSize);
+		return Number.isFinite(v) && v > 0 ? v : 14;
+	}
+
+	// Wails reports and sets the OUTER window size in its own units, and
+	// those are not always CSS px: on this Windows host with a 125 % display
+	// WindowGetSize says 920 while the webview's innerWidth says 724, i.e.
+	// Wails units are CSS px × devicePixelRatio plus the OS chrome. Whether
+	// that holds depends on the process's DPI awareness, so we do not hard-
+	// code it. Model: wails = inner × k + chrome. k is learned exactly from
+	// two observations with different inner sizes (our own resizes provide
+	// them); until then it is guessed from devicePixelRatio, keeping
+	// whichever of {dpr, 1} implies a plausible chrome. Chrome (title bar +
+	// borders) is sticky once measured — it does not change at runtime.
+	let scaleK = 0; // 0 = not learned yet
+	let chromeW = 0;
+	let chromeH = 0;
+	let lastObs: { w: number; iw: number } | null = null;
+
+	function guessScale(wailsW: number, iw: number): number {
+		const dpr = window.devicePixelRatio || 1;
+		for (const k of [dpr, 1]) {
+			const cw = wailsW - iw * k;
+			if (cw >= 0 && cw < 60 * k) return k;
+		}
+		return 1;
+	}
+
+	function calibrate(wailsW: number, wailsH: number) {
+		const iw = window.innerWidth;
+		const ih = window.innerHeight;
+		if (wailsW <= 0 || wailsH <= 0 || iw <= 0 || ih <= 0) return;
+		if (scaleK === 0 && lastObs && Math.abs(iw - lastObs.iw) >= 20) {
+			const k = (wailsW - lastObs.w) / (iw - lastObs.iw);
+			if (k > 0.5 && k < 4) scaleK = k;
+		}
+		lastObs = { w: wailsW, iw };
+		const k = scaleK || guessScale(wailsW, iw);
+		const cw = wailsW - iw * k;
+		const ch = wailsH - ih * k;
+		// Readings occasionally come back stale for one frame right after
+		// a resize (outer already new, inner not yet); only accept sane ones.
+		if (cw >= 0 && cw < 60 * k && ch >= 0 && ch < 150 * k) {
+			chromeW = cw;
+			chromeH = ch;
+		}
+	}
+
+	function currentScale(): number {
+		return scaleK || (lastObs ? guessScale(lastObs.w, lastObs.iw) : window.devicePixelRatio || 1);
+	}
+
+	// w is null when no tree is rendered: the placeholder has no natural
+	// width, so the window keeps its current width until rows show up.
+	interface ContentSize {
+		w: number | null;
+		h: number;
+	}
+
+	function measureContentSize(): ContentSize | null {
 		const main = document.querySelector("main");
 		if (!main) return null;
 		const header = main.querySelector("header") as HTMLElement | null;
@@ -48,56 +151,52 @@
 		const treePane = main.querySelector(".tree-pane") as HTMLElement | null;
 		const bar = main.querySelector(".bar") as HTMLElement | null;
 
-		// Width: read from the INNER tree element, not the tree-pane.
-		// The tree-pane stretches to fill <main>, so its scrollWidth grows with
-		// the window itself — measuring it would feed back into the fit and
-		// produce oscillation between two widths every tick. The inner .tree
-		// gets a natural max-content width from the rows' min-width:max-content
-		// rule, which is stable regardless of how wide the pane is.
-		// Header / settings / bar are flex layouts that stretch to <main> too,
-		// so we explicitly skip them: in practice they're always narrower than
-		// the tree, and including them re-introduces the same feedback bug.
+		// Fractional heights throughout: offsetHeight rounds to whole px and
+		// rows are ~25.45px at the default zoom, so per-row rounding would
+		// drift by half a row across 20 of them.
+		const hOf = (el: HTMLElement | null): number => (el ? el.getBoundingClientRect().height : 0);
+
+		const rem = remPx();
 		const innerTree = treePane?.querySelector(".tree") as HTMLElement | null;
-		if (!innerTree) {
-			// No rows rendered (waiting for first snapshot, or no matching
-			// processes). The placeholder has no stable natural width — it
-			// fills its parent, so measuring it produces a recursive 10 px
-			// shrink each tick (the custom scrollbar steals 10 px from the
-			// pane's content width). Bail entirely; the window keeps its
-			// current size until a real tree shows up.
-			return null;
+		const row = treePane?.querySelector(".row") as HTMLElement | null;
+		if (innerTree && row) {
+			const treeRect = innerTree.getBoundingClientRect();
+			const rowRect = row.getBoundingClientRect();
+			const next = { rowRem: rowRect.height / rem, rowsTopRem: (rowRect.top - treeRect.top) / rem };
+			if (
+				next.rowRem > 0 &&
+				next.rowsTopRem > 0 &&
+				(Math.abs(next.rowRem - metrics.rowRem) > 1e-3 ||
+					Math.abs(next.rowsTopRem - metrics.rowsTopRem) > 1e-3)
+			) {
+				metrics = next;
+				saveMetrics();
+			}
 		}
-		let w = Math.max(0, innerTree.scrollWidth);
+		const paneBudget =
+			(metrics.rowsTopRem + VISIBLE_ROWS * metrics.rowRem + TREE_PADDING_BOTTOM_REM) * rem;
 
-		// Height: header + settings (when open) + tree's INNER natural height
-		// + statusbar. We can't use treePane.scrollHeight directly because the
-		// pane has flex:1 — when the window already fits, scrollHeight equals
-		// offsetHeight equals the allocated size, which would create a feedback
-		// loop. The inner .tree / .placeholder / .banner reflects the actual
-		// content height regardless of pane allocation.
-		let h = 0;
-		if (header) h += header.offsetHeight;
-		if (appsBar) h += appsBar.offsetHeight;
-		if (settings) h += settings.offsetHeight;
-		if (treePane) {
-			const banner = treePane.querySelector(".banner") as HTMLElement | null;
-			const tree = treePane.querySelector(".tree") as HTMLElement | null;
-			const placeholder = treePane.querySelector(".placeholder") as HTMLElement | null;
-			if (banner) h += banner.offsetHeight;
-			if (tree) h += tree.offsetHeight;
-			else if (placeholder) h += placeholder.offsetHeight;
+		// Width comes from the INNER .tree element (width: max-content), not
+		// the pane: the pane stretches to fill <main>, so measuring it would
+		// feed the window width back into itself. When the tree is taller
+		// than the pane budget a vertical scrollbar appears and takes its
+		// width from the pane; add it back or the pane ends up narrower than
+		// the tree and grows a spurious horizontal scrollbar too.
+		let w: number | null = null;
+		if (innerTree) {
+			w = Math.ceil(innerTree.scrollWidth);
+			if (treePane && hOf(innerTree) > paneBudget + 0.5) {
+				const sb = treePane.offsetWidth - treePane.clientWidth;
+				w += sb > 0 ? sb : SCROLLBAR_PX;
+			}
 		}
-		if (bar) h += bar.offsetHeight;
 
-		// One-row breathing space at the bottom: avoids sub-pixel scrollbar
-		// flicker AND gives a visual cue that the list ends here. We sample
-		// an actual rendered row so the buffer scales with zoom; falling
-		// back to a constant when no rows are present (onboarding, empty).
-		const sampleRow = treePane?.querySelector(".row") as HTMLElement | null;
-		const buffer = sampleRow ? sampleRow.offsetHeight : 28;
-		h += buffer;
+		const banner = treePane?.querySelector(".banner") as HTMLElement | null;
+		const h = hOf(header) + hOf(appsBar) + hOf(settings) + hOf(banner) + paneBudget + hOf(bar);
 
-		return { w: Math.ceil(w), h: Math.ceil(h) };
+		// Floor, not ceil: a pane 1px short clips the 20th row's bottom
+		// border, a pane 1px long shows a sliver of the 21st row.
+		return { w, h: Math.floor(h) };
 	}
 
 	// Distinguish the native Wails webview from a browser tab pointed at the
@@ -109,11 +208,11 @@
 	// and fight the native instance for control of its size.
 	function inWailsRuntime(): boolean {
 		if (typeof (window as unknown as { go?: unknown }).go === "undefined") return false;
-		const chromeW = window.outerWidth - window.innerWidth;
-		const chromeH = window.outerHeight - window.innerHeight;
+		const dw = window.outerWidth - window.innerWidth;
+		const dh = window.outerHeight - window.innerHeight;
 		// Tab bar + URL bar in any browser is at least 60px tall. The native
 		// WebView2 reports 0–1 here.
-		if (chromeW > 5 || chromeH > 60) return false;
+		if (dw > 5 || dh > 60) return false;
 		return true;
 	}
 
@@ -141,24 +240,19 @@
 	const FIT_COOLDOWN_MS = 500;
 
 	// Set to true to re-enable per-fit telemetry (one line per snapshot tick
-	// in the wails dev terminal + browser console). Useful when debugging
-	// auto-fit / DPI / chrome-delta issues; off by default to keep the log
-	// quiet during normal use.
+	// in the wails dev terminal + browser console). Off by default.
 	const DEBUG_FIT = false;
+
+	// Last height / max width we pinned at the OS level, so the min / max
+	// calls only go out when the lock actually changes (zoom, panel toggle,
+	// monitor change), not on every tick.
+	let lockedH = 0;
+	let lockedMaxW = 0;
 
 	async function fitToContent() {
 		const m = measureContentSize();
-		const measureBad = !m || m.w <= 0 || m.h <= 0;
+		if (!m || m.h <= 0) return;
 
-		// Read the OS window's outer size from Wails. This is the only
-		// reliable source on Windows: WebView2's window.outerWidth reports the
-		// inner viewport, and Wails' WindowSetSize takes "Wails units" that
-		// turn out to be (cssInner * dpi + nativeChromePhysical) — at 125%
-		// scaling on a Windows host with a typical title bar, that's about
-		// 1.27× the CSS inner. We derive the conversion empirically from the
-		// current observation rather than trusting devicePixelRatio (the user
-		// reported 100% scale but the data clearly shows ~1.27, so a different
-		// effective scale is in play and devicePixelRatio cannot be trusted).
 		let wailsW = 0;
 		let wailsH = 0;
 		try {
@@ -166,54 +260,53 @@
 			wailsW = sz[0] ?? 0;
 			wailsH = sz[1] ?? 0;
 		} catch {
-			/* bridge unavailable — fall back to JS outer */
+			/* bridge unavailable — chrome stays at its last known value */
+		}
+		calibrate(wailsW, wailsH);
+		const k = currentScale();
+
+		// Everything from here on is in Wails units: CSS px × k plus chrome.
+		const maxW = Math.max(MIN_WIDTH, Math.floor(window.screen.availWidth * k));
+		const targetH = Math.round(m.h * k + chromeH);
+		let targetW: number;
+		if (m.w === null) {
+			if (wailsW <= 0) return; // nothing to measure and nothing known
+			targetW = wailsW;
+		} else {
+			targetW = Math.min(maxW, Math.max(MIN_WIDTH, Math.round(m.w * k + chromeW)));
 		}
 
-		// Empirical conversion: 1 CSS inner pixel == this many Wails units.
-		// For initial bootstrap when wails size isn't known yet, default to 1
-		// (just sends raw CSS px, which matches non-Windows behavior).
-		const scaleW =
-			wailsW > 0 && window.innerWidth > 0 ? wailsW / window.innerWidth : 1;
-		const scaleH =
-			wailsH > 0 && window.innerHeight > 0 ? wailsH / window.innerHeight : 1;
+		// Pin the height at the OS level before resizing: Wails clamps
+		// SetSize against the current min / max, so the lock must move first.
+		if (targetH !== lockedH || maxW !== lockedMaxW) {
+			lockedH = targetH;
+			lockedMaxW = maxW;
+			bridge.windowSetMinSize(MIN_WIDTH, targetH).catch(() => {
+				/* plain vite dev — no native window */
+			});
+			bridge.windowSetMaxSize(maxW, targetH).catch(() => {
+				/* plain vite dev — no native window */
+			});
+		}
 
-		// Both axes tight to content. No client-side min floor — Wails'
-		// MinWidth / MinHeight in main.go enforces an OS-level safety net
-		// for tiny / onboarding states; everything above that fits content
-		// exactly. Manual drags get auto-corrected on the next snapshot tick.
-		const targetCssW = measureBad
-			? 0
-			: Math.min(window.screen.availWidth, m!.w);
-		const targetCssH = measureBad
-			? 0
-			: Math.min(window.screen.availHeight, m!.h);
-		const targetW = Math.round(targetCssW * scaleW);
-		const targetH = Math.round(targetCssH * scaleH);
-
-		// Both drifts bidirectional now: any difference between current
-		// Wails outer and the computed target triggers a fit.
-		const tol = Math.max(2, Math.round(2 * Math.max(scaleW, scaleH)));
+		const tol = Math.max(2, Math.round(2 * k));
 		const driftW = Math.abs(wailsW - targetW);
 		const driftH = Math.abs(wailsH - targetH);
 		const now = Date.now();
-		const cooldown = now - lastFitAt < FIT_COOLDOWN_MS;
 		const stable = driftW <= tol && driftH <= tol;
-		const disposition = measureBad
-			? "skip-bad-measure"
-			: stable
-				? "skip-stable"
-				: cooldown
-					? "skip-cooldown"
-					: "fit";
+		const cooldown = now - lastFitAt < FIT_COOLDOWN_MS;
+		const disposition = stable ? "skip-stable" : cooldown ? "skip-cooldown" : "fit";
 		if (DEBUG_FIT) {
 			const line =
 				`fit inner=${window.innerWidth}x${window.innerHeight}` +
 				` jsouter=${window.outerWidth}x${window.outerHeight}` +
+				` dpr=${window.devicePixelRatio} screen=${window.screen.width}x${window.screen.height}` +
 				` wailsouter=${wailsW}x${wailsH}` +
-				` scale=${scaleW.toFixed(3)}x${scaleH.toFixed(3)}` +
-				` content=${m ? `${m.w}x${m.h}` : "null"}` +
-				` -> ${targetW}x${targetH}` +
-				` drift=${driftW}x${driftH} tol=${tol} [${disposition}]`;
+				` k=${k.toFixed(3)}${scaleK ? "" : "?"} chrome=${chromeW.toFixed(1)}x${chromeH.toFixed(1)}` +
+				` content=${m.w ?? "null"}x${m.h}` +
+				` rowRem=${metrics.rowRem.toFixed(3)} rowsTopRem=${metrics.rowsTopRem.toFixed(3)}` +
+				` -> ${targetW}x${targetH} (maxW ${maxW})` +
+				` drift=${driftW}x${driftH} [${disposition}]`;
 			console.log("[ceftop]", line);
 			bridge.log(line).catch(() => {
 				/* bridge unavailable in plain vite dev — console.log above suffices */
@@ -225,7 +318,6 @@
 			/* bridge unavailable (plain vite dev) — drop silently */
 		});
 	}
-
 
 	// ── Zoom (Ctrl + / Ctrl - / Ctrl 0) ──
 	// Persisted across launches in localStorage; applied to <html> font-size.

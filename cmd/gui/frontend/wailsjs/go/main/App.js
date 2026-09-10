@@ -50,6 +50,14 @@ export function WindowGetSize() {
   return window['go']['main']['App']['WindowGetSize']();
 }
 
+export function WindowSetMaxSize(arg1, arg2) {
+  return window['go']['main']['App']['WindowSetMaxSize'](arg1, arg2);
+}
+
+export function WindowSetMinSize(arg1, arg2) {
+  return window['go']['main']['App']['WindowSetMinSize'](arg1, arg2);
+}
+
 export function WindowSetSize(arg1, arg2) {
   return window['go']['main']['App']['WindowSetSize'](arg1, arg2);
 }

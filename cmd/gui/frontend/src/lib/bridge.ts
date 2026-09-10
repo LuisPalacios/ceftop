@@ -12,6 +12,8 @@ import {
 	GetAppVersion,
 	WindowSetSize,
 	WindowGetSize,
+	WindowSetMinSize,
+	WindowSetMaxSize,
 	Log,
 	FrontendReady,
 } from "../../wailsjs/go/main/App";
@@ -34,6 +36,8 @@ export const bridge = {
 	getAppVersion: (): Promise<string> => GetAppVersion(),
 	windowSetSize: (width: number, height: number): Promise<void> => WindowSetSize(width, height),
 	windowGetSize: (): Promise<[number, number]> => WindowGetSize() as unknown as Promise<[number, number]>,
+	windowSetMinSize: (width: number, height: number): Promise<void> => WindowSetMinSize(width, height),
+	windowSetMaxSize: (width: number, height: number): Promise<void> => WindowSetMaxSize(width, height),
 	log: (msg: string): Promise<void> => Log(msg),
 	// Signals that event subscriptions are wired; the backend answers with
 	// an immediate snapshot + discovery emit instead of the next tick.

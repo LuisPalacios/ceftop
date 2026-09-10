@@ -523,6 +523,26 @@ func (a *App) WindowSetSize(width, height int) {
 	wailsrt.WindowSetSize(a.ctx, width, height)
 }
 
+// WindowSetMinSize pins the OS window's minimum outer size. The frontend
+// uses it together with WindowSetMaxSize to lock the height to exactly the
+// fixed row budget while leaving the width free between the floor set here
+// and the monitor's work area.
+func (a *App) WindowSetMinSize(width, height int) {
+	if a.ctx == nil {
+		return
+	}
+	wailsrt.WindowSetMinSize(a.ctx, width, height)
+}
+
+// WindowSetMaxSize pins the OS window's maximum outer size; see
+// WindowSetMinSize.
+func (a *App) WindowSetMaxSize(width, height int) {
+	if a.ctx == nil {
+		return
+	}
+	wailsrt.WindowSetMaxSize(a.ctx, width, height)
+}
+
 // WindowGetSize returns the OS window's current outer size as [width, height].
 // Used by the auto-fit pipeline as the ground truth for drift detection: in
 // Wails v2 on Windows, WebView2's window.outerWidth reports the webview's
