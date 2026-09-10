@@ -43,4 +43,7 @@ export interface KillResult {
 export interface DiscoveredApp {
 	name: string;
 	childCount: number;
+	// Backend-resolved <img src>: a bundled /app-icons/ URL or a private
+	// data URI. Never empty — the backend falls back to the default icon.
+	iconSrc: string;
 }

@@ -57,7 +57,9 @@ Manual download — pick your platform from the [Releases](https://github.com/Lu
 
 ## Custom app icons
 
-Drop an SVG named `app-<target>.svg` next to `ceftop.json` (e.g. `~/.config/ceftop/app-myapp.svg`) and CefTop uses it for that target — in the discovered-apps bar and in the tree header. A user-supplied `app-default.svg` overrides the bundled fallback. Lookup order: private file → bundled `/app-icons/app-<target>.svg` → default.
+Drop an SVG named `app-<name>.svg` next to `ceftop.json` (e.g. `~/.config/ceftop/app-myapp.svg`) and CefTop uses it for that app — in the discovered-apps bar and in the tree header. A user-supplied `app-default.svg` overrides the bundled fallback.
+
+Matching between process names and icon files is fuzzy, so the file name only has to be recognizably the same app: case, separators (`-`, `_`, `.`, spaces), a trailing `.exe`, and platform words (`win`, `mac`, `linux`, `for`, `x64`, …) are all ignored, and a shorter name matches a longer one that contains it. `Docker Desktop.exe` finds `app-docker-desktop.svg`, `Google Chrome` finds `app-chrome.svg`. When a private and a bundled icon match equally well, the private one wins. The bundled set and its design rules live in [`assets/APP-ICON-SPEC.md`](assets/APP-ICON-SPEC.md).
 
 ## Develop
 
@@ -95,6 +97,7 @@ cmd/gui/                 Wails GUI binary (CefTopApp)
   frontend/              Svelte + Vite project
 pkg/
   config/                Config schema, OS-aware load/save
+  icons/                 Fuzzy process-name → icon-file matching
   process/               Cross-platform discovery, role parsing, kill
 .github/workflows/ci.yml Tagged-release pipeline (Win amd64+arm64, macOS arm64+amd64, Linux amd64)
 scripts/

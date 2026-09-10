@@ -43,10 +43,3 @@ export const discoveredAppsStore: Writable<DiscoveredApp[] | null> = writable(nu
 
 // showDiscoveredApps drives the apps-toggle slide-down bar (hidden by default).
 export const showDiscoveredApps: Writable<boolean> = writable(false);
-
-// privateIconsStore holds user-supplied SVG icons that live alongside the
-// config JSON, keyed by the <name> in app-<name>.svg. Each value is a
-// base64 data URI ready to drop into <img src=...>. Refreshed on startup
-// and after the user edits the config (lookup order: private → bundled →
-// default). See lib/iconResolver.ts.
-export const privateIconsStore: Writable<Record<string, string>> = writable({});

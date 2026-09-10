@@ -4,7 +4,7 @@
 
 import {
 	GetConfig,
-	GetPrivateIcons,
+	ResolveIcon,
 	SetTargetApp,
 	SetTickInterval,
 	OpenConfigInEditor,
@@ -27,8 +27,7 @@ import type {
 
 export const bridge = {
 	getConfig: (): Promise<ConfigState> => GetConfig() as unknown as Promise<ConfigState>,
-	getPrivateIcons: (): Promise<Record<string, string>> =>
-		GetPrivateIcons() as unknown as Promise<Record<string, string>>,
+	resolveIcon: (name: string): Promise<string> => ResolveIcon(name),
 	setTargetApp: (name: string): Promise<void> => SetTargetApp(name),
 	setTickInterval: (seconds: number): Promise<void> => SetTickInterval(seconds),
 	openConfigInEditor: (): Promise<void> => OpenConfigInEditor(),

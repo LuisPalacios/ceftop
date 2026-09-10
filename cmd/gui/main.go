@@ -2,6 +2,8 @@ package main
 
 import (
 	"embed"
+	"io/fs"
+	"log"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -19,12 +21,26 @@ var (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// bundledIconDir is where the frontend build places the synced app-*.svg
+// icons inside the embedded dist tree. The backend lists this directory to
+// learn which bundled icons exist, so icon resolution (fuzzy name matching)
+// happens in exactly one place — see pkg/icons.
+const bundledIconDir = "frontend/dist/app-icons"
+
 func main() {
+	iconFS, err := fs.Sub(assets, bundledIconDir)
+	if err != nil {
+		// Only happens if the embed pattern changes; the app still runs,
+		// every target just gets the default icon.
+		log.Println("[ceftop] bundled icons unavailable:", err)
+		iconFS = nil
+	}
+
 	// Create an instance of the app structure
-	app := NewApp()
+	app := NewApp(iconFS)
 
 	// Create application with options
-	err := wails.Run(&options.App{
+	err = wails.Run(&options.App{
 		Title:  "CefTop",
 		Width:  920,
 		Height: 640,

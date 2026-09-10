@@ -18,25 +18,27 @@ export namespace main {
 	        this.tickIntervalSeconds = source["tickIntervalSeconds"];
 	    }
 	}
-
-}
-
-export namespace process {
-	
-	export class DiscoveredApp {
+	export class DiscoveredAppView {
 	    name: string;
 	    childCount: number;
+	    iconSrc: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new DiscoveredApp(source);
+	        return new DiscoveredAppView(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.childCount = source["childCount"];
+	        this.iconSrc = source["iconSrc"];
 	    }
 	}
+
+}
+
+export namespace process {
+	
 	export class KillResult {
 	    killed: boolean;
 	    err?: string;

@@ -23,6 +23,8 @@ const KNOWN: Record<string, string> = {
 	slack: "Slack",
 	code: "VSCode",
 	chrome: "Chrome",
+	chatgpt: "ChatGPT",
+	"docker desktop": "Docker",
 };
 
 const GENERIC_PREFIXES = new Set(["my", "super", "the"]);

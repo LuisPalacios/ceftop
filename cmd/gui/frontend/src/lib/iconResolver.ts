@@ -1,54 +1,57 @@
 // Icon resolution for CEF / Chromium target apps.
 //
-// Lookup order for a given <name>:
-//   1. User-private SVG next to the config JSON, served as a base64 data URI
-//      under the "private" key. Refreshed via refreshPrivateIcons().
-//   2. Bundled /app-icons/app-<name>.svg.
-//   3. Default fallback: the user's private app-default.svg if present,
-//      otherwise the bundled /app-icons/app-default.svg.
+// All matching lives in the backend (pkg/icons): it knows both the bundled
+// icon set and the user's private app-<name>.svg files, and scores names
+// fuzzily so "Docker Desktop.exe" finds app-docker-desktop.svg. The
+// frontend never builds icon file names itself:
 //
-// The two consumers (DiscoveredAppsBar and the ProcessTree header) share
-// this module so the lookup order is defined in exactly one place.
+//   - Discovered apps arrive with `iconSrc` already resolved.
+//   - The current target's icon is fetched via bridge.resolveIcon() and
+//     cached in targetIconStore; App.svelte refreshes it whenever the
+//     configured target changes and on every discovery tick (which is how
+//     a freshly dropped private icon shows up without a restart).
+//
+// The only client-side fallback is the <img on:error> handler, which swaps
+// in the bundled default if a src ever fails to load.
 
+import { writable } from "svelte/store";
+import type { Writable } from "svelte/store";
 import { bridge } from "./bridge";
-import { privateIconsStore } from "./stores";
 
 export const BUNDLED_DEFAULT_ICON = "/app-icons/app-default.svg";
-export const DEFAULT_ICON_KEY = "default";
 
-export function bundledIconSrc(name: string): string {
-	return `/app-icons/app-${name}.svg`;
-}
+// Resolved <img src> for the currently configured target. Starts on the
+// bundled default so the header never renders a broken image.
+export const targetIconStore: Writable<string> = writable(BUNDLED_DEFAULT_ICON);
 
-export function resolveIconSrc(
-	name: string,
-	privates: Record<string, string>,
-): string {
-	if (name && privates[name]) return privates[name];
-	return bundledIconSrc(name);
-}
+let lastRequested = "";
 
-export function resolveDefaultIcon(privates: Record<string, string>): string {
-	return privates[DEFAULT_ICON_KEY] ?? BUNDLED_DEFAULT_ICON;
-}
-
-// onIconError handler: called when an <img> 404s on either the private data
-// URI (corrupted base64? unlikely but cheap to guard) or the bundled file.
-// Falls through to the default icon, then disables further error retries to
-// avoid infinite loops if the default itself is missing.
-export function makeIconErrorHandler(privates: Record<string, string>) {
-	return function onIconError(e: Event) {
-		const el = e.currentTarget as HTMLImageElement;
-		el.onerror = null;
-		el.src = resolveDefaultIcon(privates);
-	};
-}
-
-export async function refreshPrivateIcons(): Promise<void> {
-	try {
-		const m = await bridge.getPrivateIcons();
-		privateIconsStore.set(m ?? {});
-	} catch {
-		privateIconsStore.set({});
+// refreshTargetIcon asks the backend for the icon that matches `name` and
+// publishes it to targetIconStore. Out-of-order responses are dropped so a
+// slow answer for a previous target cannot overwrite the current one.
+export async function refreshTargetIcon(name: string): Promise<void> {
+	const wanted = name ?? "";
+	lastRequested = wanted;
+	if (!wanted) {
+		targetIconStore.set(BUNDLED_DEFAULT_ICON);
+		return;
 	}
+	try {
+		const src = await bridge.resolveIcon(wanted);
+		if (lastRequested !== wanted) return;
+		targetIconStore.set(src || BUNDLED_DEFAULT_ICON);
+	} catch {
+		if (lastRequested !== wanted) return;
+		targetIconStore.set(BUNDLED_DEFAULT_ICON);
+	}
+}
+
+// onIconError: called when an <img> fails to load its src. Falls through
+// to the bundled default, then disables further retries so a missing
+// default cannot loop.
+export function onIconError(e: Event): void {
+	const el = e.currentTarget as HTMLImageElement;
+	el.onerror = null;
+	if (el.src.endsWith(BUNDLED_DEFAULT_ICON)) return;
+	el.src = BUNDLED_DEFAULT_ICON;
 }

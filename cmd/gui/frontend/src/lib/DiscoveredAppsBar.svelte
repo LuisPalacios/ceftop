@@ -5,16 +5,13 @@
 		configStore,
 		discoveredAppsStore,
 		showDiscoveredApps,
-		privateIconsStore,
 	} from "./stores";
-	import { resolveIconSrc, makeIconErrorHandler } from "./iconResolver";
+	import { onIconError, BUNDLED_DEFAULT_ICON } from "./iconResolver";
 	import { friendlyName } from "./friendlyName";
 	import type { DiscoveredApp } from "./types";
 
 	$: cfg = $configStore;
 	$: apps = $discoveredAppsStore ?? [];
-	$: privates = $privateIconsStore;
-	$: onIconError = makeIconErrorHandler(privates);
 
 	let switching = "";
 
@@ -55,7 +52,7 @@
 			>
 				<img
 					class="apps-icon"
-					src={resolveIconSrc(app.name, privates)}
+					src={app.iconSrc || BUNDLED_DEFAULT_ICON}
 					alt=""
 					on:error={onIconError}
 				/>

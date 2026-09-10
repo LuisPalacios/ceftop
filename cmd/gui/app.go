@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/LuisPalacios/ceftop/pkg/config"
+	"github.com/LuisPalacios/ceftop/pkg/icons"
 	"github.com/LuisPalacios/ceftop/pkg/process"
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -47,6 +49,11 @@ type App struct {
 	provider process.Provider
 	monitor  *process.Monitor
 
+	// iconFS is the embedded directory holding the bundled app-*.svg icons
+	// (frontend/dist/app-icons). nil means "no bundled icons" — every
+	// target then resolves to the default icon unless a private one matches.
+	iconFS fs.FS
+
 	// quit is closed by shutdown to stop the snapshot loop. shutdownOnce keeps
 	// double-close panics out of the picture if Wails ever calls the shutdown
 	// hook twice (e.g. on graceful + forced close).
@@ -60,16 +67,36 @@ type App struct {
 	intervalChange chan time.Duration
 }
 
-// NewApp creates a new App instance.
-func NewApp() *App {
+// NewApp creates a new App instance. iconFS is the embedded bundled-icon
+// directory (may be nil).
+func NewApp(iconFS fs.FS) *App {
 	provider := process.NewGopsutilProvider()
 	return &App{
 		cfgPath:        config.DefaultPath(),
 		provider:       provider,
 		monitor:        process.NewMonitor(provider),
+		iconFS:         iconFS,
 		quit:           make(chan struct{}),
 		intervalChange: make(chan time.Duration, 1),
 	}
+}
+
+// loadIcons builds a fresh icon index from the bundled set plus whatever
+// app-*.svg files currently sit next to the config JSON. It is cheap (two
+// directory listings and a handful of small file reads) and is rebuilt on
+// every discovery tick so a freshly dropped private icon shows up within
+// seconds. A private-directory read failure degrades to bundled-only.
+func (a *App) loadIcons() *icons.Index {
+	a.mu.Lock()
+	dir := filepath.Dir(a.cfgPath)
+	a.mu.Unlock()
+
+	idx, err := icons.Load(a.iconFS, dir)
+	if err != nil {
+		log.Println("[ceftop] private icons:", err)
+		idx, _ = icons.Load(a.iconFS, "")
+	}
+	return idx
 }
 
 // startup is the Wails OnStartup hook. The context is captured so runtime
@@ -167,42 +194,56 @@ func (a *App) emitDiscovery() {
 	wailsrt.EventsEmit(a.ctx, eventDiscovery, apps)
 }
 
+// DiscoveredAppView is what the frontend receives per discovered app: the
+// process-level facts from pkg/process plus the icon already resolved by
+// pkg/icons, so the UI never has to guess file names. IconSrc is either a
+// bundled URL (/app-icons/app-<key>.svg) or a data URI for a private icon.
+type DiscoveredAppView struct {
+	Name       string `json:"name"`
+	ChildCount int    `json:"childCount"`
+	IconSrc    string `json:"iconSrc"`
+}
+
 // discoverAppsMerged combines live host discovery with names declared by
 // user-supplied "app-<name>.svg" files in the config directory. Names that
 // exist as icons but have no running process show up with ChildCount == 0
 // so the user can still pick them as targets — useful for an app the user
 // only launches occasionally, or one that's currently down.
-func (a *App) discoverAppsMerged() ([]process.DiscoveredApp, error) {
+//
+// "Already running" is decided by the same fuzzy matcher that resolves
+// icons, so a private app-docker-desktop.svg does not spawn a duplicate
+// offline entry next to the live "Docker Desktop" process.
+func (a *App) discoverAppsMerged() ([]DiscoveredAppView, error) {
 	apps, err := process.DiscoverApps(a.provider)
 	if err != nil {
 		return nil, err
 	}
+	idx := a.loadIcons()
 
-	a.mu.Lock()
-	dir := filepath.Dir(a.cfgPath)
-	a.mu.Unlock()
-
-	names, iconErr := config.PrivateIconNames(dir)
-	if iconErr != nil {
-		log.Println("[ceftop] private icon names:", iconErr)
-		return apps, nil
-	}
-	if len(names) == 0 {
-		return apps, nil
-	}
-
-	seen := make(map[string]struct{}, len(apps))
+	out := make([]DiscoveredAppView, 0, len(apps))
 	for _, app := range apps {
-		seen[app.Name] = struct{}{}
+		out = append(out, DiscoveredAppView{
+			Name:       app.Name,
+			ChildCount: app.ChildCount,
+			IconSrc:    idx.Resolve(app.Name),
+		})
 	}
-	for _, n := range names {
-		if _, ok := seen[n]; ok {
+
+	for _, key := range idx.PrivateKeys() {
+		running := false
+		for _, app := range apps {
+			if icons.Matches(key, app.Name) {
+				running = true
+				break
+			}
+		}
+		if running {
 			continue
 		}
-		apps = append(apps, process.DiscoveredApp{Name: n, ChildCount: 0})
+		out = append(out, DiscoveredAppView{Name: key, ChildCount: 0, IconSrc: idx.Resolve(key)})
 	}
-	sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
-	return apps, nil
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
 
 func (a *App) loadConfig() {
@@ -372,29 +413,24 @@ func (a *App) KillProcess(pid int) process.KillResult {
 // DiscoverApps scans every process on the host, identifies the
 // CEF / Chromium / Electron applications currently running (any process
 // tree containing children with --type=<role> flags), and returns one
-// entry per distinct browser process. User-declared apps (any
-// "app-<name>.svg" next to the config JSON) are merged in with
-// ChildCount == 0 so they remain selectable when not running. The
-// frontend uses this for the one-shot pull at mount time; subsequent
-// updates arrive on the "discovery" event emitted by discoveryLoop.
-func (a *App) DiscoverApps() ([]process.DiscoveredApp, error) {
+// entry per distinct browser process, each with its icon resolved.
+// User-declared apps (any "app-<name>.svg" next to the config JSON) are
+// merged in with ChildCount == 0 so they remain selectable when not
+// running. The frontend uses this for the one-shot pull at mount time;
+// subsequent updates arrive on the "discovery" event emitted by
+// discoveryLoop.
+func (a *App) DiscoverApps() ([]DiscoveredAppView, error) {
 	return a.discoverAppsMerged()
 }
 
-// GetPrivateIcons returns user-supplied SVG icons that live alongside the
-// config JSON, keyed by <name> (the part between "app-" and ".svg"). The
-// frontend prefers these over the bundled icons in /app-icons/. An empty
-// map is a normal "no overrides yet" result — never an error.
-func (a *App) GetPrivateIcons() map[string]string {
-	a.mu.Lock()
-	dir := filepath.Dir(a.cfgPath)
-	a.mu.Unlock()
-	icons, err := config.LoadPrivateIcons(dir)
-	if err != nil {
-		log.Println("[ceftop] private icons:", err)
-		return map[string]string{}
-	}
-	return icons
+// ResolveIcon returns the <img src> for the icon that best matches an app
+// or process name: a private icon next to the config JSON when one
+// matches, otherwise a bundled one, otherwise the default. Matching is
+// fuzzy — see pkg/icons — so "Docker Desktop.exe", "docker-desktop" and
+// "Docker Desktop for Mac" all land on app-docker-desktop.svg. The result
+// is always a usable src; this never errors.
+func (a *App) ResolveIcon(name string) string {
+	return a.loadIcons().Resolve(name)
 }
 
 // WindowSetSize sets the OS window's outer size. The frontend uses this to

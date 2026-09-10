@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { snapshotStore, snapshotErrorStore, privateIconsStore } from "./stores";
-	import { resolveIconSrc, makeIconErrorHandler } from "./iconResolver";
+	import { snapshotStore, snapshotErrorStore } from "./stores";
+	import { targetIconStore, onIconError } from "./iconResolver";
 	import { friendlyName } from "./friendlyName";
 	import ProcessNode from "./ProcessNode.svelte";
 	import type { ProcessNode as PNode } from "./types";
@@ -33,9 +33,6 @@
 	$: targetMinRem = targetLabel.length * 0.5 + 2.5;
 	$: pidMinRem = (showToggle ? 6.65 : 5) + depth;
 	$: leftCol = `${Math.max(pidMinRem, targetMinRem)}rem`;
-
-	$: privates = $privateIconsStore;
-	$: onIconError = makeIconErrorHandler(privates);
 </script>
 
 {#if $snapshotErrorStore}
@@ -54,7 +51,7 @@
 			<span class="header-target" title={target}>
 				<img
 					class="header-target-icon"
-					src={resolveIconSrc(target, privates)}
+					src={$targetIconStore}
 					alt=""
 					on:error={onIconError}
 				/>

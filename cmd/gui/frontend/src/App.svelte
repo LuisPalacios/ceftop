@@ -16,7 +16,7 @@
 	import StatusBar from "./lib/StatusBar.svelte";
 	import Settings from "./lib/Settings.svelte";
 	import DiscoveredAppsBar from "./lib/DiscoveredAppsBar.svelte";
-	import { refreshPrivateIcons } from "./lib/iconResolver";
+	import { refreshTargetIcon } from "./lib/iconResolver";
 
 	// ── Window auto-fit ──
 	// Width tracks content tightly on every snapshot tick / zoom / gear
@@ -294,11 +294,6 @@
 			snapshotErrorStore.set(`could not read config: ${String(e)}`);
 		}
 
-		// Initial private-icon scan so the first paint already prefers user
-		// overrides over the bundled SVGs. Subsequent refreshes happen on each
-		// discovery tick (see onDiscovery handler below).
-		await refreshPrivateIcons();
-
 		unsubSnapshot = bridge.onSnapshot((snap) => {
 			snapshotStore.set(snap);
 			snapshotErrorStore.set("");
@@ -315,7 +310,7 @@
 			// Piggyback on the 5 s discovery cadence: any private icon the user
 			// drops into the config directory shows up within one tick without
 			// having to wire a refresh through SetTargetApp / OpenConfigInEditor.
-			refreshPrivateIcons();
+			refreshTargetIcon($configStore?.appName ?? "");
 		});
 
 		unsubDiscoveryError = bridge.onDiscoveryError(() => {
@@ -377,6 +372,10 @@
 
 	$: appsButtonDisabled =
 		Array.isArray($discoveredAppsStore) && $discoveredAppsStore.length === 0;
+
+	// The header icon follows the configured target: re-resolve whenever the
+	// user picks a different app (apps bar, settings, status bar editor).
+	$: refreshTargetIcon($configStore?.appName ?? "");
 </script>
 
 <main>

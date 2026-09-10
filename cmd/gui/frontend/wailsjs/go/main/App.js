@@ -14,10 +14,6 @@ export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
 
-export function GetPrivateIcons() {
-  return window['go']['main']['App']['GetPrivateIcons']();
-}
-
 export function KillProcess(arg1) {
   return window['go']['main']['App']['KillProcess'](arg1);
 }
@@ -28,6 +24,10 @@ export function Log(arg1) {
 
 export function OpenConfigInEditor() {
   return window['go']['main']['App']['OpenConfigInEditor']();
+}
+
+export function ResolveIcon(arg1) {
+  return window['go']['main']['App']['ResolveIcon'](arg1);
 }
 
 export function SetTargetApp(arg1) {
