@@ -41,5 +41,6 @@ export const showSettings: Writable<boolean> = writable(false);
 // and found nothing". Refreshed by the backend on its own slow cadence.
 export const discoveredAppsStore: Writable<DiscoveredApp[] | null> = writable(null);
 
-// showDiscoveredApps drives the apps-toggle slide-down bar (hidden by default).
+// showDiscoveredApps drives the apps-toggle slide-down bar. Hidden on a first
+// launch; afterwards App.svelte restores the last state from localStorage.
 export const showDiscoveredApps: Writable<boolean> = writable(false);

@@ -141,6 +141,16 @@
 		}
 	}
 
+	// apps.json is created on first Edit, pre-filled with the WebView2 hosts
+	// currently on screen, so the user only has to change names.
+	async function openCatalog() {
+		try {
+			await bridge.openCatalogInEditor();
+		} catch (e) {
+			tickError = String(e);
+		}
+	}
+
 	function onTargetKeydown(e: KeyboardEvent) {
 		if (e.key === "Enter") saveTarget();
 		else if (e.key === "Escape") cancelTarget();
@@ -208,6 +218,21 @@
 		<span class="settings-value path">{cfg?.path || ""}</span>
 		<button class="settings-btn" on:click={openInEditor}>Edit</button>
 	</div>
+
+	<div class="settings-row">
+		<span class="settings-label">App names</span>
+		<span
+			class="settings-value path"
+			title="Friendly names and WebView2 host names. Created on first Edit with the apps on screen."
+		>{cfg?.catalogPath || ""}</span>
+		<button class="settings-btn" on:click={openCatalog}>Edit</button>
+	</div>
+	{#if cfg?.catalogError}
+		<div class="settings-row">
+			<span class="settings-label warn">apps.json</span>
+			<span class="settings-value warn" title={cfg.catalogError}>{cfg.catalogError}</span>
+		</div>
+	{/if}
 
 	<div class="settings-row">
 		<span class="settings-label">Version</span>

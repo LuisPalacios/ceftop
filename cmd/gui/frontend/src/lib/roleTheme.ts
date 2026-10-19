@@ -45,6 +45,17 @@ export function colorForNode(node: ProcessNode): string {
 	return colorForRole(node.role);
 }
 
+// roleLabel is the text shown in the Type column. The main process of an
+// embedded runtime group (e.g. one Microsoft Edge WebView2 group) names the
+// app that hosts it — "Main / WhatsApp" — instead of the generic
+// "Main / Browser". The color still follows the role, so it stays green.
+export function roleLabel(node: ProcessNode): string {
+	if (node.role === ROLE_MAIN && node.hostLabel) {
+		return `Main / ${node.hostLabel}`;
+	}
+	return node.role;
+}
+
 // Stable ordering for the role legend in the status bar. Roles not in this
 // list fall to the end alphabetically.
 export const ROLE_LEGEND_ORDER = [

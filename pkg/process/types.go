@@ -24,11 +24,15 @@ import "time"
 // Memory is in bytes — conversion to MB happens in monitor.go so callers can
 // report exact numbers when they want them. CPUSeconds is the cumulative
 // user+system CPU time since process start; deriving a tick-relative percent
-// from it is the Monitor's job.
+// from it is the Monitor's job. ParentName is the parent's exe basename as
+// seen in the same host-wide enumeration pass, or "" when the parent is gone;
+// it is how an embedded runtime's main process learns which app hosts it,
+// since that parent normally sits outside the target's subtree.
 type RawProcess struct {
 	PID        int32
 	PPID       int32
 	Name       string
+	ParentName string
 	Cmdline    string
 	Threads    int32
 	MemRSS     uint64
@@ -66,11 +70,21 @@ type Provider interface {
 // Cmdline is kept on the Go side for role extraction and tests but is not
 // serialized: the frontend never reads it, and Chromium command lines are
 // long enough that they made up ~80 % of every tick's event payload.
+//
+// Host / HostPID identify the app that embeds this process group, set only on
+// the main process of an embedded runtime such as Microsoft Edge WebView2
+// (see resolveHost). Host is the host's exe basename as reported by the OS;
+// HostPID is 0 when the host is known by name only. HostLabel is the
+// display name for Host, filled by the caller (the GUI resolves it through
+// pkg/catalog); pkg/process only reports the facts.
 type ProcessNode struct {
 	PID        int32          `json:"pid"`
 	PPID       int32          `json:"ppid"`
 	Role       Role           `json:"role"`
 	Name       string         `json:"name"`
+	Host       string         `json:"host,omitempty"`
+	HostPID    int32          `json:"hostPid,omitempty"`
+	HostLabel  string         `json:"hostLabel,omitempty"`
 	Threads    int32          `json:"threads"`
 	MemMB      float64        `json:"memMB"`
 	CPUPercent float64        `json:"cpuPercent"`

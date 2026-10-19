@@ -2,6 +2,7 @@ package process
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -11,7 +12,7 @@ func TestDiscoverApps_SingleCEFTree(t *testing.T) {
 		{PID: 101, PPID: 100, Name: "chrome.exe", Cmdline: "chrome.exe --type=renderer"},
 		{PID: 102, PPID: 100, Name: "chrome.exe", Cmdline: "chrome.exe --type=gpu-process"},
 	}
-	apps, err := DiscoverApps(&fakeProvider{raws: raws})
+	apps, err := DiscoverApps(&fakeProvider{raws: raws}, nil)
 	if err != nil {
 		t.Fatalf("DiscoverApps error: %v", err)
 	}
@@ -42,23 +43,49 @@ func TestDiscoverApps_MultipleCoresidentApps(t *testing.T) {
 		{PID: 400, PPID: 1, Name: "explorer.exe", Cmdline: "explorer.exe"},
 		{PID: 401, PPID: 400, Name: "notepad.exe", Cmdline: "notepad.exe foo.txt"},
 	}
-	apps, err := DiscoverApps(&fakeProvider{raws: raws})
+	apps, err := DiscoverApps(&fakeProvider{raws: raws}, nil)
 	if err != nil {
 		t.Fatalf("DiscoverApps error: %v", err)
 	}
 	if len(apps) != 3 {
 		t.Fatalf("want 3 apps, got %d (%+v)", len(apps), apps)
 	}
-	// Sorted by Name asc: chrome, code, myapp.
+	// Sorted by Name asc: chrome, code, myapp. PID is the main process.
 	want := []DiscoveredApp{
-		{Name: "chrome", ChildCount: 1},
-		{Name: "code", ChildCount: 2},
-		{Name: "myapp", ChildCount: 1},
+		{Name: "chrome", ChildCount: 1, PID: 100},
+		{Name: "code", ChildCount: 2, PID: 200},
+		{Name: "myapp", ChildCount: 1, PID: 300},
 	}
 	for i, w := range want {
-		if apps[i] != w {
+		if !reflect.DeepEqual(apps[i], w) {
 			t.Errorf("apps[%d] = %+v, want %+v", i, apps[i], w)
 		}
+	}
+}
+
+func TestDiscoverApps_MultiGroupRuntimeIsOneEntryWithLowestPID(t *testing.T) {
+	// Two WebView2 groups hosted by different apps roll up into one entry;
+	// PID is the lowest main process so it does not flap between scans, and
+	// Hosts names every app hosting a group, once, sorted by exe.
+	raws := []RawProcess{
+		{PID: 50, PPID: 1, Name: "Zed.exe", Cmdline: "Zed.exe"},
+		{PID: 700, PPID: 50, Name: "msedgewebview2.exe", ParentName: "Zed.exe", Cmdline: "msedgewebview2.exe --embedded-browser-webview=1 --webview-exe-name=Zed.exe"},
+		{PID: 701, PPID: 700, Name: "msedgewebview2.exe", ParentName: "msedgewebview2.exe", Cmdline: "msedgewebview2.exe --type=renderer"},
+		{PID: 702, PPID: 700, Name: "msedgewebview2.exe", ParentName: "msedgewebview2.exe", Cmdline: "msedgewebview2.exe --type=utility"},
+		{PID: 60, PPID: 1, Name: "Alpha.exe", Cmdline: "Alpha.exe"},
+		{PID: 600, PPID: 60, Name: "msedgewebview2.exe", ParentName: "Alpha.exe", Cmdline: "msedgewebview2.exe --embedded-browser-webview=1"},
+		{PID: 601, PPID: 600, Name: "msedgewebview2.exe", ParentName: "msedgewebview2.exe", Cmdline: "msedgewebview2.exe --type=gpu-process"},
+	}
+	apps, err := DiscoverApps(&fakeProvider{raws: raws}, nil)
+	if err != nil {
+		t.Fatalf("DiscoverApps error: %v", err)
+	}
+	want := DiscoveredApp{
+		Name: "msedgewebview2", ChildCount: 3, PID: 600,
+		Hosts: []HostRef{{Exe: "Alpha.exe", PID: 60}, {Exe: "Zed.exe", PID: 50}},
+	}
+	if len(apps) != 1 || !reflect.DeepEqual(apps[0], want) {
+		t.Fatalf("apps = %+v, want [%+v]", apps, want)
 	}
 }
 
@@ -70,7 +97,7 @@ func TestDiscoverApps_RenamedHelperWalksToBrowser(t *testing.T) {
 		{PID: 110, PPID: 100, Name: "Google Chrome Helper", Cmdline: "Google Chrome Helper --type=renderer"},
 		{PID: 111, PPID: 110, Name: "Google Chrome Helper", Cmdline: "Google Chrome Helper --type=utility"},
 	}
-	apps, err := DiscoverApps(&fakeProvider{raws: raws})
+	apps, err := DiscoverApps(&fakeProvider{raws: raws}, nil)
 	if err != nil {
 		t.Fatalf("DiscoverApps error: %v", err)
 	}
@@ -94,7 +121,7 @@ func TestDiscoverApps_OrphanChildIsSkipped(t *testing.T) {
 		{PID: 201, PPID: 200, Name: "code.exe", Cmdline: "code.exe --type=renderer"},
 		{PID: 999, PPID: 99999, Name: "ghost.exe", Cmdline: "ghost.exe --type=renderer"},
 	}
-	apps, err := DiscoverApps(&fakeProvider{raws: raws})
+	apps, err := DiscoverApps(&fakeProvider{raws: raws}, nil)
 	if err != nil {
 		t.Fatalf("DiscoverApps error: %v", err)
 	}
@@ -107,7 +134,7 @@ func TestDiscoverApps_OrphanChildIsSkipped(t *testing.T) {
 }
 
 func TestDiscoverApps_EmptyHostReturnsEmpty(t *testing.T) {
-	apps, err := DiscoverApps(&fakeProvider{raws: nil})
+	apps, err := DiscoverApps(&fakeProvider{raws: nil}, nil)
 	if err != nil {
 		t.Fatalf("DiscoverApps error: %v", err)
 	}
@@ -122,7 +149,7 @@ func TestDiscoverApps_NoCEFNoApps(t *testing.T) {
 		{PID: 2, PPID: 1, Name: "bash", Cmdline: "/bin/bash"},
 		{PID: 3, PPID: 2, Name: "vim", Cmdline: "vim file.txt"},
 	}
-	apps, err := DiscoverApps(&fakeProvider{raws: raws})
+	apps, err := DiscoverApps(&fakeProvider{raws: raws}, nil)
 	if err != nil {
 		t.Fatalf("DiscoverApps error: %v", err)
 	}
@@ -133,7 +160,7 @@ func TestDiscoverApps_NoCEFNoApps(t *testing.T) {
 
 func TestDiscoverApps_PropagatesProviderError(t *testing.T) {
 	want := errors.New("boom")
-	_, err := DiscoverApps(&fakeProvider{err: want})
+	_, err := DiscoverApps(&fakeProvider{err: want}, nil)
 	if !errors.Is(err, want) {
 		t.Fatalf("DiscoverApps error = %v, want %v", err, want)
 	}
@@ -145,7 +172,7 @@ func TestDiscoverApps_SelfParentIsSkipped(t *testing.T) {
 	raws := []RawProcess{
 		{PID: 500, PPID: 500, Name: "weird.exe", Cmdline: "weird.exe --type=renderer"},
 	}
-	apps, err := DiscoverApps(&fakeProvider{raws: raws})
+	apps, err := DiscoverApps(&fakeProvider{raws: raws}, nil)
 	if err != nil {
 		t.Fatalf("DiscoverApps error: %v", err)
 	}

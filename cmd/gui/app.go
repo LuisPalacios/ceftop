@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LuisPalacios/ceftop/pkg/catalog"
 	"github.com/LuisPalacios/ceftop/pkg/config"
 	"github.com/LuisPalacios/ceftop/pkg/icons"
 	"github.com/LuisPalacios/ceftop/pkg/process"
@@ -49,6 +50,19 @@ type App struct {
 	provider process.Provider
 	monitor  *process.Monitor
 
+	// catalog is the merged app catalog (embedded + the user's apps.json),
+	// rebuilt on every discovery tick so edits show up within seconds.
+	// catalogErr is the last override error logged, so a broken apps.json
+	// is reported once rather than every tick. appPIDs maps each discovered
+	// app name to one of its main PIDs, which lets DescribeApp ask the OS
+	// for the name of an app the catalog does not know. seenHosts is the
+	// last scan's embedded-runtime hosts (runtime → host exe → label), used
+	// to seed a new apps.json. All under mu.
+	catalog    *catalog.Catalog
+	catalogErr string
+	appPIDs    map[string]int32
+	seenHosts  map[string]map[string]string
+
 	// iconFS is the embedded directory holding the bundled app-*.svg icons
 	// (frontend/dist/app-icons). nil means "no bundled icons" — every
 	// target then resolves to the default icon unless a private one matches.
@@ -83,7 +97,7 @@ type App struct {
 // directory (may be nil).
 func NewApp(iconFS fs.FS) *App {
 	provider := process.NewGopsutilProvider()
-	return &App{
+	a := &App{
 		cfgPath:          config.DefaultPath(),
 		provider:         provider,
 		monitor:          process.NewMonitor(provider),
@@ -93,6 +107,54 @@ func NewApp(iconFS fs.FS) *App {
 		refresh:          make(chan struct{}, 1),
 		discoveryRefresh: make(chan struct{}, 1),
 	}
+	// Read the catalog at call time so a reloaded apps.json takes effect
+	// on the next tick.
+	a.monitor.SetMultiGroup(func(name string) bool {
+		return a.currentCatalog().IsMultiGroup(name)
+	})
+	return a
+}
+
+// reloadCatalog rebuilds the app catalog from the embedded set plus the
+// optional apps.json next to the config JSON. A broken override keeps the
+// embedded entries and is logged once per distinct error.
+func (a *App) reloadCatalog() *catalog.Catalog {
+	cat, err := catalog.Load(a.catalogPath())
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+
+	a.mu.Lock()
+	if msg != "" && msg != a.catalogErr {
+		log.Println("[ceftop] app catalog:", msg)
+	}
+	a.catalogErr = msg
+	a.catalog = cat
+	a.mu.Unlock()
+	return cat
+}
+
+// currentCatalog returns the last loaded catalog, loading it on first use.
+func (a *App) currentCatalog() *catalog.Catalog {
+	a.mu.Lock()
+	cat := a.catalog
+	a.mu.Unlock()
+	if cat == nil {
+		cat = a.reloadCatalog()
+	}
+	return cat
+}
+
+// iconFor resolves the icon for an app, honouring an explicit icon key
+// from the catalog before falling back to fuzzy matching on the name.
+func iconFor(idx *icons.Index, cat *catalog.Catalog, name string) string {
+	if e, ok := cat.Lookup(name); ok && e.Icon != "" {
+		if src, _, ok := idx.Match(e.Icon); ok {
+			return src
+		}
+	}
+	return idx.Resolve(name)
 }
 
 // loadIcons builds a fresh icon index from the bundled set plus whatever
@@ -120,6 +182,7 @@ func (a *App) loadIcons() *icons.Index {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.loadConfig()
+	a.reloadCatalog()
 	go a.snapshotLoop()
 	go a.discoveryLoop()
 }
@@ -270,12 +333,24 @@ func (a *App) emitDiscovery() {
 
 // DiscoveredAppView is what the frontend receives per discovered app: the
 // process-level facts from pkg/process plus the icon already resolved by
-// pkg/icons, so the UI never has to guess file names. IconSrc is either a
-// bundled URL (/app-icons/app-<key>.svg) or a data URI for a private icon.
+// pkg/icons and the label resolved by pkg/catalog, so the UI never has to
+// guess file names or names. IconSrc is either a bundled URL
+// (/app-icons/app-<key>.svg) or a data URI for a private icon.
+//
+// Hosts is filled for embedded runtimes (Microsoft Edge WebView2): the apps
+// hosting one of its process groups right now, each with its label.
 type DiscoveredAppView struct {
-	Name       string `json:"name"`
-	ChildCount int    `json:"childCount"`
-	IconSrc    string `json:"iconSrc"`
+	Name         string     `json:"name"`
+	FriendlyName string     `json:"friendlyName"`
+	ChildCount   int        `json:"childCount"`
+	IconSrc      string     `json:"iconSrc"`
+	Hosts        []HostView `json:"hosts,omitempty"`
+}
+
+// HostView is one app hosting an embedded runtime, as the UI shows it.
+type HostView struct {
+	Exe   string `json:"exe"`
+	Label string `json:"label"`
 }
 
 // discoverAppsMerged combines live host discovery with names declared by
@@ -288,20 +363,38 @@ type DiscoveredAppView struct {
 // icons, so a private app-docker-desktop.svg does not spawn a duplicate
 // offline entry next to the live "Docker Desktop" process.
 func (a *App) discoverAppsMerged() ([]DiscoveredAppView, error) {
-	apps, err := process.DiscoverApps(a.provider)
+	cat := a.reloadCatalog()
+	apps, err := process.DiscoverApps(a.provider, cat.IsMultiGroup)
 	if err != nil {
 		return nil, err
 	}
 	idx := a.loadIcons()
 
+	pids := make(map[string]int32, len(apps))
+	seen := make(map[string]map[string]string)
 	out := make([]DiscoveredAppView, 0, len(apps))
 	for _, app := range apps {
-		out = append(out, DiscoveredAppView{
-			Name:       app.Name,
-			ChildCount: app.ChildCount,
-			IconSrc:    idx.Resolve(app.Name),
-		})
+		pids[app.Name] = app.PID
+		view := DiscoveredAppView{
+			Name:         app.Name,
+			FriendlyName: cat.FriendlyName(app.Name, app.PID),
+			ChildCount:   app.ChildCount,
+			IconSrc:      iconFor(idx, cat, app.Name),
+		}
+		for _, h := range app.Hosts {
+			label := cat.HostName(app.Name, h.Exe, h.PID)
+			view.Hosts = append(view.Hosts, HostView{Exe: h.Exe, Label: label})
+			if seen[app.Name] == nil {
+				seen[app.Name] = map[string]string{}
+			}
+			seen[app.Name][h.Exe] = label
+		}
+		out = append(out, view)
 	}
+	a.mu.Lock()
+	a.appPIDs = pids
+	a.seenHosts = seen
+	a.mu.Unlock()
 
 	for _, key := range idx.PrivateKeys() {
 		running := false
@@ -314,7 +407,12 @@ func (a *App) discoverAppsMerged() ([]DiscoveredAppView, error) {
 		if running {
 			continue
 		}
-		out = append(out, DiscoveredAppView{Name: key, ChildCount: 0, IconSrc: idx.Resolve(key)})
+		out = append(out, DiscoveredAppView{
+			Name:         key,
+			FriendlyName: cat.FriendlyName(key, 0),
+			ChildCount:   0,
+			IconSrc:      iconFor(idx, cat, key),
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
@@ -339,11 +437,15 @@ func (a *App) loadConfig() {
 // ConfigState is the snapshot returned to the frontend on each GetConfig call.
 // Path lets the UI tell the user where its config lives; LoadError surfaces a
 // parse failure so onboarding can warn before overwriting a corrupted file.
+// CatalogPath is the user's apps.json (it may not exist yet) and
+// CatalogError the last problem reading it, so Settings can point at a typo.
 type ConfigState struct {
 	AppName             string `json:"appName"`
 	Path                string `json:"path"`
 	LoadError           string `json:"loadError"`
 	TickIntervalSeconds int    `json:"tickIntervalSeconds"`
+	CatalogPath         string `json:"catalogPath"`
+	CatalogError        string `json:"catalogError"`
 }
 
 // GetConfig returns the current configuration state.
@@ -359,6 +461,8 @@ func (a *App) GetConfig() ConfigState {
 		Path:                a.cfgPath,
 		LoadError:           a.cfgLoadError,
 		TickIntervalSeconds: int(cfg.TickInterval() / time.Second),
+		CatalogPath:         filepath.Join(filepath.Dir(a.cfgPath), catalog.FileName),
+		CatalogError:        a.catalogErr,
 	}
 }
 
@@ -431,14 +535,18 @@ func (a *App) SetTickInterval(seconds int) error {
 }
 
 // OpenConfigInEditor opens the on-disk config file with the OS default
-// application registered for `.json`. On Windows we route through
-// `cmd /c start ""` so the spawned editor inherits its own console; the
-// HideWindow flag prevents a flashing cmd.exe window.
+// application registered for `.json`.
 func (a *App) OpenConfigInEditor() error {
 	a.mu.Lock()
 	path := a.cfgPath
 	a.mu.Unlock()
+	return openInEditor(path)
+}
 
+// openInEditor opens path with the OS default application for its type. On
+// Windows we route through `cmd /c start ""` so the spawned editor inherits
+// its own console; the HideWindow flag prevents a flashing cmd.exe window.
+func openInEditor(path string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
@@ -478,7 +586,65 @@ func (a *App) Snapshot() (*process.ProcessSnapshot, error) {
 		target = a.cfg.AppName
 	}
 	a.mu.Unlock()
-	return a.monitor.Snapshot(target)
+	snap, err := a.monitor.Snapshot(target)
+	if err != nil {
+		return nil, err
+	}
+	labelHosts(snap.Roots, a.currentCatalog())
+	return snap, nil
+}
+
+// labelHosts fills HostLabel on every node that pkg/process tied to a host
+// app (the main process of each WebView2 group, for instance), looking the
+// host up in the runtime's hosts list first (node.Name is the runtime). The
+// snapshot is freshly built and not yet published, so this is its last
+// write.
+func labelHosts(nodes []*process.ProcessNode, cat *catalog.Catalog) {
+	for _, n := range nodes {
+		if n.Host != "" {
+			n.HostLabel = cat.HostName(n.Name, n.Host, n.HostPID)
+		}
+		labelHosts(n.Children, cat)
+	}
+}
+
+// catalogPath is the user's apps.json, next to ceftop.json.
+func (a *App) catalogPath() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return filepath.Join(filepath.Dir(a.cfgPath), catalog.FileName)
+}
+
+// RenameHost names a host app inside an embedded runtime's tree, the
+// "WhatsApp" in "Main / WhatsApp", by writing it to the user's apps.json
+// (apps[runtime].hosts[host]); an empty label removes the user's name so the
+// default applies again. The tree and the apps bar refresh immediately.
+// Errors (for example an apps.json the user broke by hand, which is never
+// overwritten) come back as text the UI shows next to the field.
+func (a *App) RenameHost(runtime, host, label string) error {
+	if err := catalog.SetHostName(a.catalogPath(), runtime, host, label); err != nil {
+		return err
+	}
+	a.reloadCatalog()
+	a.requestRefresh()
+	a.requestDiscovery()
+	return nil
+}
+
+// OpenCatalogInEditor opens the user's apps.json in the OS editor. When the
+// file does not exist yet it is created first, pre-filled with every
+// embedded-runtime host seen in the last discovery scan and its current
+// label, so the user starts from the apps actually on screen and only has
+// to edit names.
+func (a *App) OpenCatalogInEditor() error {
+	path := a.catalogPath()
+	a.mu.Lock()
+	seen := a.seenHosts
+	a.mu.Unlock()
+	if _, err := catalog.CreateUserFile(path, seen); err != nil {
+		return err
+	}
+	return openInEditor(path)
 }
 
 // KillProcess terminates the process identified by pid and returns a
@@ -502,66 +668,60 @@ func (a *App) DiscoverApps() ([]DiscoveredAppView, error) {
 	return a.discoverAppsMerged()
 }
 
-// ResolveIcon returns the <img src> for the icon that best matches an app
-// or process name: a private icon next to the config JSON when one
-// matches, otherwise a bundled one, otherwise the default. Matching is
-// fuzzy — see pkg/icons — so "Docker Desktop.exe", "docker-desktop" and
-// "Docker Desktop for Mac" all land on app-docker-desktop.svg. The result
-// is always a usable src; this never errors.
-func (a *App) ResolveIcon(name string) string {
-	return a.loadIcons().Resolve(name)
+// AppInfo is how the frontend shows one app: its display name and icon.
+type AppInfo struct {
+	Name         string `json:"name"`
+	FriendlyName string `json:"friendlyName"`
+	IconSrc      string `json:"iconSrc"`
 }
 
-// WindowSetSize sets the OS window's outer size. The frontend uses this to
-// fit-to-content on snapshot ticks and zoom changes; clamping against the
-// MinWidth / MinHeight set in main.go is enforced by Wails itself, so this
-// stays a thin pass-through.
-func (a *App) WindowSetSize(width, height int) {
-	if a.ctx == nil {
+// DescribeApp returns the display name and icon for an app or process name.
+// The name comes from pkg/catalog (catalog entry, then the OS's description
+// of a running instance found by the last discovery scan, then a heuristic).
+// The icon is the catalog's explicit key when set, otherwise the best fuzzy
+// match: a private icon next to the config JSON, then a bundled one, then
+// the default — so "Docker Desktop.exe", "docker-desktop" and "Docker
+// Desktop for Mac" all land on app-docker-desktop.svg. Both fields are
+// always usable; this never errors.
+func (a *App) DescribeApp(name string) AppInfo {
+	cat := a.currentCatalog()
+	a.mu.Lock()
+	pid := a.appPIDs[process.NormalizeTargetName(name)]
+	a.mu.Unlock()
+	return AppInfo{
+		Name:         name,
+		FriendlyName: cat.FriendlyName(name, pid),
+		IconSrc:      iconFor(a.loadIcons(), cat, name),
+	}
+}
+
+// FitWindowToScreen keeps the window inside the monitor it is on. The
+// frontend reports that monitor's work area (screen.availWidth / availHeight,
+// in CSS px, which equal Wails' DIP units) whenever it changes; the window
+// takes the fixed windowWidth × windowHeight capped to it, so it shrinks on a
+// small monitor and grows back on a large one. When capped it is re-centred,
+// so no edge is left hanging off the work area. Policy lives here; the
+// frontend only measures.
+func (a *App) FitWindowToScreen(screenW, screenH int) {
+	if a.ctx == nil || screenW <= 0 || screenH <= 0 {
 		return
 	}
-	wailsrt.WindowSetSize(a.ctx, width, height)
-}
-
-// WindowSetMinSize pins the OS window's minimum outer size. The frontend
-// uses it together with WindowSetMaxSize to lock the height to exactly the
-// fixed row budget while leaving the width free between the floor set here
-// and the monitor's work area.
-func (a *App) WindowSetMinSize(width, height int) {
-	if a.ctx == nil {
+	w, h := min(windowWidth, screenW), min(windowHeight, screenH)
+	if cw, ch := wailsrt.WindowGetSize(a.ctx); cw == w && ch == h {
 		return
 	}
-	wailsrt.WindowSetMinSize(a.ctx, width, height)
-}
-
-// WindowSetMaxSize pins the OS window's maximum outer size; see
-// WindowSetMinSize.
-func (a *App) WindowSetMaxSize(width, height int) {
-	if a.ctx == nil {
-		return
+	wailsrt.WindowSetSize(a.ctx, w, h)
+	if w < windowWidth || h < windowHeight {
+		wailsrt.WindowCenter(a.ctx)
 	}
-	wailsrt.WindowSetMaxSize(a.ctx, width, height)
-}
-
-// WindowGetSize returns the OS window's current outer size as [width, height].
-// Used by the auto-fit pipeline as the ground truth for drift detection: in
-// Wails v2 on Windows, WebView2's window.outerWidth reports the webview's
-// inner viewport rather than the OS window outer, so the JS-side comparison
-// is unreliable. Wails' runtime answer comes from the OS itself.
-func (a *App) WindowGetSize() [2]int {
-	if a.ctx == nil {
-		return [2]int{0, 0}
-	}
-	w, h := wailsrt.WindowGetSize(a.ctx)
-	return [2]int{w, h}
 }
 
 // Log forwards a frontend diagnostic line to the backend stderr so it shows
 // up in the `wails dev` terminal. Wails v2 on Windows does not forward
 // webview console.log to the terminal, and right-click → Inspect is not
 // always available, leaving the user no other channel for diagnosing
-// runtime behavior. log.Println prefixes date+time so the user can see when
-// each fit fired without guessing from terminal scroll order.
+// runtime behavior. log.Println prefixes date+time so the user can tell when
+// each line was logged without guessing from terminal scroll order.
 func (a *App) Log(msg string) {
 	log.Println("[ceftop]", msg)
 }

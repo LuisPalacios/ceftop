@@ -4,22 +4,22 @@
 
 import {
 	GetConfig,
-	ResolveIcon,
+	DescribeApp,
 	SetTargetApp,
 	SetTickInterval,
 	OpenConfigInEditor,
+	OpenCatalogInEditor,
+	RenameHost,
 	KillProcess,
 	GetAppVersion,
-	WindowSetSize,
-	WindowGetSize,
-	WindowSetMinSize,
-	WindowSetMaxSize,
+	FitWindowToScreen,
 	Log,
 	FrontendReady,
 } from "../../wailsjs/go/main/App";
 import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime";
 
 import type {
+	AppInfo,
 	ConfigState,
 	DiscoveredApp,
 	ProcessSnapshot,
@@ -28,16 +28,20 @@ import type {
 
 export const bridge = {
 	getConfig: (): Promise<ConfigState> => GetConfig() as unknown as Promise<ConfigState>,
-	resolveIcon: (name: string): Promise<string> => ResolveIcon(name),
+	describeApp: (name: string): Promise<AppInfo> => DescribeApp(name) as unknown as Promise<AppInfo>,
 	setTargetApp: (name: string): Promise<void> => SetTargetApp(name),
 	setTickInterval: (seconds: number): Promise<void> => SetTickInterval(seconds),
 	openConfigInEditor: (): Promise<void> => OpenConfigInEditor(),
+	// Creates apps.json pre-filled with the hosts on screen when missing.
+	openCatalogInEditor: (): Promise<void> => OpenCatalogInEditor(),
+	// Names a host app inside a runtime's tree; "" restores the default.
+	renameHost: (runtime: string, host: string, label: string): Promise<void> =>
+		RenameHost(runtime, host, label),
 	killProcess: (pid: number): Promise<KillResult> => KillProcess(pid) as unknown as Promise<KillResult>,
 	getAppVersion: (): Promise<string> => GetAppVersion(),
-	windowSetSize: (width: number, height: number): Promise<void> => WindowSetSize(width, height),
-	windowGetSize: (): Promise<[number, number]> => WindowGetSize() as unknown as Promise<[number, number]>,
-	windowSetMinSize: (width: number, height: number): Promise<void> => WindowSetMinSize(width, height),
-	windowSetMaxSize: (width: number, height: number): Promise<void> => WindowSetMaxSize(width, height),
+	// Caps the fixed-size window to the current monitor's work area.
+	fitWindowToScreen: (screenW: number, screenH: number): Promise<void> =>
+		FitWindowToScreen(screenW, screenH),
 	log: (msg: string): Promise<void> => Log(msg),
 	// Signals that event subscriptions are wired; the backend answers with
 	// an immediate snapshot + discovery emit instead of the next tick.

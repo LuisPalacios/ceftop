@@ -5,10 +5,25 @@ import "sort"
 // DiscoveredApp is a CEF / Chromium / Electron application detected on the
 // host. Name is the normalized executable basename (matches what
 // SetTargetApp expects); ChildCount is the number of `--type=` children
-// rolled up under it in the latest scan.
+// rolled up under it in the latest scan. PID is one of its main processes
+// (the lowest, so it is stable across scans), handy for asking the OS about
+// the executable; a multiGroup runtime has several and any of them will do.
+//
+// Hosts lists, for an embedded runtime such as Microsoft Edge WebView2, the
+// apps currently hosting one of its process groups (see resolveHost),
+// sorted by exe name and de-duplicated; it is empty for ordinary apps.
 type DiscoveredApp struct {
-	Name       string `json:"name"`
-	ChildCount int    `json:"childCount"`
+	Name       string    `json:"name"`
+	ChildCount int       `json:"childCount"`
+	PID        int32     `json:"pid"`
+	Hosts      []HostRef `json:"hosts,omitempty"`
+}
+
+// HostRef is one app hosting an embedded runtime: its exe name as the OS
+// reports it, and its PID (0 when known by name only).
+type HostRef struct {
+	Exe string `json:"exe"`
+	PID int32  `json:"pid"`
 }
 
 // DiscoverApps scans every process on the host, finds the ones carrying a
@@ -20,7 +35,10 @@ type DiscoveredApp struct {
 // returns three entries. Children whose ancestry can't be resolved (orphan,
 // re-parented, or PPID cycle) are silently skipped: discovery is best-effort
 // and a transient resolution failure must not corrupt the list.
-func DiscoverApps(provider Provider) ([]DiscoveredApp, error) {
+//
+// isMultiGroup is the same optional catalog hint Monitor.SetMultiGroup takes;
+// it only affects Hosts.
+func DiscoverApps(provider Provider, isMultiGroup func(string) bool) ([]DiscoveredApp, error) {
 	raws, err := provider.Snapshot("")
 	if err != nil {
 		return nil, err
@@ -32,6 +50,9 @@ func DiscoverApps(provider Provider) ([]DiscoveredApp, error) {
 	}
 
 	counts := make(map[string]int)
+	pids := make(map[string]int32)
+	hosts := make(map[string]map[string]HostRef) // app → normalized host exe → ref
+	seenRoots := make(map[int32]bool)
 	for _, r := range raws {
 		if !typeFlagRe.MatchString(r.Cmdline) {
 			continue
@@ -45,11 +66,31 @@ func DiscoverApps(provider Provider) ([]DiscoveredApp, error) {
 			continue
 		}
 		counts[name]++
+		if p, ok := pids[name]; !ok || root.PID < p {
+			pids[name] = root.PID
+		}
+		if seenRoots[root.PID] {
+			continue
+		}
+		seenRoots[root.PID] = true
+		if exe, hostPID := resolveHost(root, isMultiGroup); exe != "" {
+			if hosts[name] == nil {
+				hosts[name] = map[string]HostRef{}
+			}
+			hosts[name][NormalizeTargetName(exe)] = HostRef{Exe: exe, PID: hostPID}
+		}
 	}
 
 	out := make([]DiscoveredApp, 0, len(counts))
 	for name, n := range counts {
-		out = append(out, DiscoveredApp{Name: name, ChildCount: n})
+		app := DiscoveredApp{Name: name, ChildCount: n, PID: pids[name]}
+		for _, h := range hosts[name] {
+			app.Hosts = append(app.Hosts, h)
+		}
+		sort.Slice(app.Hosts, func(i, j int) bool {
+			return NormalizeTargetName(app.Hosts[i].Exe) < NormalizeTargetName(app.Hosts[j].Exe)
+		})
+		out = append(out, app)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
