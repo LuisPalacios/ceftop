@@ -10,6 +10,10 @@ export function DiscoverApps() {
   return window['go']['main']['App']['DiscoverApps']();
 }
 
+export function FitWindowToScreen(arg1, arg2) {
+  return window['go']['main']['App']['FitWindowToScreen'](arg1, arg2);
+}
+
 export function FrontendReady() {
   return window['go']['main']['App']['FrontendReady']();
 }
@@ -52,20 +56,4 @@ export function SetTickInterval(arg1) {
 
 export function Snapshot() {
   return window['go']['main']['App']['Snapshot']();
-}
-
-export function WindowGetSize() {
-  return window['go']['main']['App']['WindowGetSize']();
-}
-
-export function WindowSetMaxSize(arg1, arg2) {
-  return window['go']['main']['App']['WindowSetMaxSize'](arg1, arg2);
-}
-
-export function WindowSetMinSize(arg1, arg2) {
-  return window['go']['main']['App']['WindowSetMinSize'](arg1, arg2);
-}
-
-export function WindowSetSize(arg1, arg2) {
-  return window['go']['main']['App']['WindowSetSize'](arg1, arg2);
 }

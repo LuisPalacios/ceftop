@@ -695,56 +695,33 @@ func (a *App) DescribeApp(name string) AppInfo {
 	}
 }
 
-// WindowSetSize sets the OS window's outer size. The frontend uses this to
-// fit-to-content on snapshot ticks and zoom changes; clamping against the
-// MinWidth / MinHeight set in main.go is enforced by Wails itself, so this
-// stays a thin pass-through.
-func (a *App) WindowSetSize(width, height int) {
-	if a.ctx == nil {
+// FitWindowToScreen keeps the window inside the monitor it is on. The
+// frontend reports that monitor's work area (screen.availWidth / availHeight,
+// in CSS px, which equal Wails' DIP units) whenever it changes; the window
+// takes the fixed windowWidth × windowHeight capped to it, so it shrinks on a
+// small monitor and grows back on a large one. When capped it is re-centred,
+// so no edge is left hanging off the work area. Policy lives here; the
+// frontend only measures.
+func (a *App) FitWindowToScreen(screenW, screenH int) {
+	if a.ctx == nil || screenW <= 0 || screenH <= 0 {
 		return
 	}
-	wailsrt.WindowSetSize(a.ctx, width, height)
-}
-
-// WindowSetMinSize pins the OS window's minimum outer size. The frontend
-// uses it together with WindowSetMaxSize to lock the height to exactly the
-// fixed row budget while leaving the width free between the floor set here
-// and the monitor's work area.
-func (a *App) WindowSetMinSize(width, height int) {
-	if a.ctx == nil {
+	w, h := min(windowWidth, screenW), min(windowHeight, screenH)
+	if cw, ch := wailsrt.WindowGetSize(a.ctx); cw == w && ch == h {
 		return
 	}
-	wailsrt.WindowSetMinSize(a.ctx, width, height)
-}
-
-// WindowSetMaxSize pins the OS window's maximum outer size; see
-// WindowSetMinSize.
-func (a *App) WindowSetMaxSize(width, height int) {
-	if a.ctx == nil {
-		return
+	wailsrt.WindowSetSize(a.ctx, w, h)
+	if w < windowWidth || h < windowHeight {
+		wailsrt.WindowCenter(a.ctx)
 	}
-	wailsrt.WindowSetMaxSize(a.ctx, width, height)
-}
-
-// WindowGetSize returns the OS window's current outer size as [width, height].
-// Used by the auto-fit pipeline as the ground truth for drift detection: in
-// Wails v2 on Windows, WebView2's window.outerWidth reports the webview's
-// inner viewport rather than the OS window outer, so the JS-side comparison
-// is unreliable. Wails' runtime answer comes from the OS itself.
-func (a *App) WindowGetSize() [2]int {
-	if a.ctx == nil {
-		return [2]int{0, 0}
-	}
-	w, h := wailsrt.WindowGetSize(a.ctx)
-	return [2]int{w, h}
 }
 
 // Log forwards a frontend diagnostic line to the backend stderr so it shows
 // up in the `wails dev` terminal. Wails v2 on Windows does not forward
 // webview console.log to the terminal, and right-click → Inspect is not
 // always available, leaving the user no other channel for diagnosing
-// runtime behavior. log.Println prefixes date+time so the user can see when
-// each fit fired without guessing from terminal scroll order.
+// runtime behavior. log.Println prefixes date+time so the user can tell when
+// each line was logged without guessing from terminal scroll order.
 func (a *App) Log(msg string) {
 	log.Println("[ceftop]", msg)
 }

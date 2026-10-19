@@ -7,6 +7,8 @@ export function DescribeApp(arg1:string):Promise<main.AppInfo>;
 
 export function DiscoverApps():Promise<Array<main.DiscoveredAppView>>;
 
+export function FitWindowToScreen(arg1:number,arg2:number):Promise<void>;
+
 export function FrontendReady():Promise<void>;
 
 export function GetAppVersion():Promise<string>;
@@ -28,11 +30,3 @@ export function SetTargetApp(arg1:string):Promise<void>;
 export function SetTickInterval(arg1:number):Promise<void>;
 
 export function Snapshot():Promise<process.ProcessSnapshot>;
-
-export function WindowGetSize():Promise<any>;
-
-export function WindowSetMaxSize(arg1:number,arg2:number):Promise<void>;
-
-export function WindowSetMinSize(arg1:number,arg2:number):Promise<void>;
-
-export function WindowSetSize(arg1:number,arg2:number):Promise<void>;

@@ -12,10 +12,7 @@ import {
 	RenameHost,
 	KillProcess,
 	GetAppVersion,
-	WindowSetSize,
-	WindowGetSize,
-	WindowSetMinSize,
-	WindowSetMaxSize,
+	FitWindowToScreen,
 	Log,
 	FrontendReady,
 } from "../../wailsjs/go/main/App";
@@ -42,10 +39,9 @@ export const bridge = {
 		RenameHost(runtime, host, label),
 	killProcess: (pid: number): Promise<KillResult> => KillProcess(pid) as unknown as Promise<KillResult>,
 	getAppVersion: (): Promise<string> => GetAppVersion(),
-	windowSetSize: (width: number, height: number): Promise<void> => WindowSetSize(width, height),
-	windowGetSize: (): Promise<[number, number]> => WindowGetSize() as unknown as Promise<[number, number]>,
-	windowSetMinSize: (width: number, height: number): Promise<void> => WindowSetMinSize(width, height),
-	windowSetMaxSize: (width: number, height: number): Promise<void> => WindowSetMaxSize(width, height),
+	// Caps the fixed-size window to the current monitor's work area.
+	fitWindowToScreen: (screenW: number, screenH: number): Promise<void> =>
+		FitWindowToScreen(screenW, screenH),
 	log: (msg: string): Promise<void> => Log(msg),
 	// Signals that event subscriptions are wired; the backend answers with
 	// an immediate snapshot + discovery emit instead of the next tick.

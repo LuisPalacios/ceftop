@@ -27,6 +27,18 @@ var assets embed.FS
 // happens in exactly one place — see pkg/icons.
 const bundledIconDir = "frontend/dist/app-icons"
 
+// The window's one and only size, as an outer size in Wails units (DIPs:
+// Wails scales them with the monitor DPI, so they equal CSS px at any display
+// scale). On Windows 11 the frame adds an invisible 7 px border left, right
+// and bottom, so this shows as 936×993. The user cannot resize the window;
+// the only exception is FitWindowToScreen shrinking it to a monitor whose
+// work area is smaller. Content that does not fit (a very deep tree, a large
+// zoom, a shrunk window) scrolls inside the process tree pane.
+const (
+	windowWidth  = 950
+	windowHeight = 1000
+)
+
 func main() {
 	iconFS, err := fs.Sub(assets, bundledIconDir)
 	if err != nil {
@@ -42,16 +54,11 @@ func main() {
 	// Create application with options
 	err = wails.Run(&options.App{
 		Title:  "CefTop",
-		Width:  920,
-		Height: 640,
-		// Boot-time floor only. Once the monitor view is up, the frontend
-		// pins min and max height to its fixed 20-row budget and caps the
-		// width at the monitor's work area (see the window-fit section in
-		// App.svelte); MinWidth is mirrored there as MIN_WIDTH. This just
-		// stops the window from collapsing to 0 during onboarding or a
-		// layout glitch.
-		MinWidth:  200,
-		MinHeight: 150,
+		// Fixed size, never resized by the user; see windowWidth. DisableResize
+		// also removes the maximize button.
+		Width:         windowWidth,
+		Height:        windowHeight,
+		DisableResize: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
