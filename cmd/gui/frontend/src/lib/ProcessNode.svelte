@@ -1,7 +1,8 @@
 <script lang="ts">
+	import { tick } from "svelte";
 	import { bridge } from "./bridge";
 	import { killFlashStore } from "./stores";
-	import { colorForNode } from "./roleTheme";
+	import { colorForNode, roleLabel, ROLE_MAIN } from "./roleTheme";
 	import type { ProcessNode } from "./types";
 
 	export let node: ProcessNode;
@@ -15,7 +16,60 @@
 	let killing = false;
 
 	$: roleColor = colorForNode(node);
+	$: label = roleLabel(node);
+	$: roleTitle = node.host
+		? `Hosted by ${node.host}${node.hostPid ? ` [${node.hostPid}]` : ""} — click the name to rename it`
+		: label;
 	$: hasChildren = !!node.children && node.children.length > 0;
+	// The main process of an embedded runtime group names its host app, and
+	// that name can be edited in place: it is saved to the user's apps.json
+	// under the runtime's hosts list, so the next tick (requested right
+	// away) already shows it.
+	$: hosted = node.role === ROLE_MAIN && !!node.host && !!node.hostLabel;
+
+	let renaming = false;
+	let renameDraft = "";
+	let renameSaving = false;
+	let renameError = "";
+	let renameInputEl: HTMLInputElement | undefined;
+
+	async function startRename() {
+		renameDraft = node.hostLabel ?? "";
+		renameError = "";
+		renaming = true;
+		await tick();
+		renameInputEl?.select();
+	}
+
+	async function saveRename() {
+		if (!renaming || renameSaving) return;
+		const next = renameDraft.trim();
+		if (next === (node.hostLabel ?? "")) {
+			renaming = false;
+			return;
+		}
+		renameSaving = true;
+		try {
+			// An empty name restores the default (catalog or discovery).
+			await bridge.renameHost(node.name, node.host ?? "", next);
+			renaming = false;
+			renameError = "";
+		} catch (e) {
+			renameError = String(e);
+		} finally {
+			renameSaving = false;
+		}
+	}
+
+	function cancelRename() {
+		renaming = false;
+		renameError = "";
+	}
+
+	function renameKey(e: KeyboardEvent) {
+		if (e.key === "Enter") saveRename();
+		else if (e.key === "Escape") cancelRename();
+	}
 
 	// CPU% formatter: always one decimal. Non-consuming / first-tick / NaN
 	// all collapse to "0.0" so the column never renders an em-dash placeholder
@@ -64,14 +118,14 @@
 			const result = await bridge.killProcess(node.pid);
 			killFlashStore.set({
 				pid: node.pid,
-				role: node.role,
+				role: label,
 				result,
 				at: Date.now(),
 			});
 		} catch (e) {
 			killFlashStore.set({
 				pid: node.pid,
-				role: node.role,
+				role: label,
 				result: { killed: false, err: String(e) },
 				at: Date.now(),
 			});
@@ -100,7 +154,29 @@
 		<span class="pid">[{node.pid}]</span>
 	</div>
 
-	<span class="role" style="color: {roleColor}">{node.role}</span>
+	{#if hosted}
+		<span class="role hosted" style="color: {roleColor}" title={roleTitle}>
+			<span class="role-prefix">Main /</span>
+			{#if renaming}
+				<input
+					bind:this={renameInputEl}
+					bind:value={renameDraft}
+					on:keydown={renameKey}
+					on:blur={saveRename}
+					disabled={renameSaving}
+					class="rename-input"
+					placeholder="empty = default name"
+					autocomplete="off"
+					spellcheck="false"
+				/>
+				{#if renameError}<span class="rename-error" title={renameError}>!</span>{/if}
+			{:else}
+				<button class="host-name" on:click={startRename}>{node.hostLabel}</button>
+			{/if}
+		</span>
+	{:else}
+		<span class="role" style="color: {roleColor}" title={roleTitle}>{label}</span>
+	{/if}
 	<span class="metric">{node.threads}</span>
 	<span class="metric {memClass}">{node.memMB.toFixed(2)} MB</span>
 	<span class="metric {cpuClass}"><span class="num cpu-num">{fmtCpuPct(node.cpuPercent)}</span>%</span>
@@ -124,7 +200,7 @@
 	   without disturbing the rest of the row. */
 	.row {
 		display: grid;
-		grid-template-columns: var(--left-col, 12.5rem) 10rem 3rem 6rem 3rem 5rem auto;
+		grid-template-columns: var(--left-col, 12.5rem) var(--role-col, 10rem) 3rem 6rem 3rem 5rem auto;
 		gap: 0.4rem;
 		align-items: center;
 		padding: 0.25rem 0.4rem;
@@ -175,6 +251,69 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+	/* Hosted main process: "Main /" stays put, the host name is a quiet
+	   button that reveals it is editable only on hover (dotted underline
+	   plus a pencil), so the tree reads as data, not as a form. */
+	.role.hosted {
+		display: flex;
+		align-items: baseline;
+		gap: 0.35em;
+		min-width: 0;
+	}
+	.role-prefix {
+		flex-shrink: 0;
+	}
+	.host-name {
+		min-width: 0;
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		cursor: text;
+		text-decoration: underline dotted transparent;
+		text-underline-offset: 3px;
+		transition: text-decoration-color 0.15s;
+	}
+	.host-name::after {
+		content: " ✎";
+		opacity: 0;
+		transition: opacity 0.15s;
+	}
+	.row:hover .host-name {
+		text-decoration-color: currentColor;
+	}
+	.row:hover .host-name::after,
+	.host-name:focus-visible::after {
+		opacity: 0.7;
+	}
+	.rename-input {
+		flex: 1;
+		min-width: 5rem;
+		font: inherit;
+		font-weight: 600;
+		padding: 0 4px;
+		border-radius: 3px;
+		border: 1px solid currentColor;
+		background: var(--bg);
+		color: inherit;
+	}
+	.rename-input:focus {
+		outline: none;
+	}
+	.rename-input::placeholder {
+		color: var(--fg-muted);
+		font-weight: 400;
+	}
+	.rename-error {
+		color: var(--danger);
+		font-weight: 700;
+		cursor: help;
+	}
+
 	.metric {
 		color: var(--fg);
 		white-space: nowrap;

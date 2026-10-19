@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "apps": {
+    "adobecollabsync": { "friendlyName": "Adobe Sync", "vendor": "Adobe", "kind": "cef" },
+    "chatgpt": { "friendlyName": "ChatGPT", "vendor": "OpenAI", "kind": "app" },
+    "chrome": { "friendlyName": "Chrome", "vendor": "Google", "kind": "browser" },
+    "code": { "friendlyName": "VS Code", "vendor": "Microsoft", "kind": "electron" },
+    "docker desktop": { "friendlyName": "Docker", "vendor": "Docker", "kind": "electron" },
+    "msedge": { "friendlyName": "Edge", "vendor": "Microsoft", "kind": "browser", "icon": "edge" },
+    "msedgewebview2": {
+      "friendlyName": "Edge WebView2",
+      "vendor": "Microsoft",
+      "kind": "runtime",
+      "multiGroup": true,
+      "description": "Chromium runtime embedded by other apps; each process group belongs to the app that hosts it.",
+      "hosts": {
+        "ceftopapp": "CefTop",
+        "googledrivefs": "Google Drive",
+        "ms-teams": "Teams",
+        "olk": "Outlook",
+        "searchhost": "Windows Search",
+        "widgets": "Widgets",
+        "whatsapp*": "WhatsApp"
+      }
+    },
+    "slack": { "friendlyName": "Slack", "vendor": "Slack", "kind": "electron" }
+  }
+}

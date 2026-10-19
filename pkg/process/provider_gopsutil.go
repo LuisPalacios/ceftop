@@ -94,8 +94,10 @@ func (p *GopsutilProvider) Snapshot(target string) ([]RawProcess, error) {
 	}
 
 	refs := make([]procRef, len(lites))
+	names := make(map[int32]string, len(lites))
 	for i := range lites {
 		refs[i] = lites[i].procRef
+		names[lites[i].PID] = lites[i].Name
 	}
 	keep := selectSubtreePIDs(refs, target)
 
@@ -130,6 +132,7 @@ func (p *GopsutilProvider) Snapshot(target string) ([]RawProcess, error) {
 			PID:        l.PID,
 			PPID:       l.PPID,
 			Name:       l.Name,
+			ParentName: names[l.PPID],
 			Cmdline:    cmdline,
 			Threads:    threads,
 			MemRSS:     rss,

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { snapshotStore, snapshotErrorStore } from "./stores";
 	import ProcessNode from "./ProcessNode.svelte";
+	import { roleLabel } from "./roleTheme";
 	import type { ProcessNode as PNode } from "./types";
 
 	// Max nesting depth across the snapshot. Used to size the PID column
@@ -27,6 +28,24 @@
 	// The column title is a fixed "Process", which always fits in 5rem.
 	$: pidMinRem = (showToggle ? 6.65 : 5) + depth;
 	$: leftCol = `${pidMinRem}rem`;
+
+	// The Type column is 10rem, enough for every Chromium role, but a host
+	// label such as "Main / Windows Search" can be longer. Widen the column
+	// to the longest label in the tree so no row gets an ellipsis; the
+	// window fit then follows the wider row. Mono glyphs are ~0.6em at the
+	// row's 0.875rem font size.
+	const ROLE_COL_MIN_REM = 10;
+	const ROLE_GLYPH_REM = 0.6 * 0.875;
+	// Hosted labels get two extra glyphs for the hover pencil (" ✎").
+	function maxLabelLength(nodes: PNode[] | null | undefined): number {
+		let m = 0;
+		for (const n of nodes ?? []) {
+			const len = roleLabel(n).length + (n.hostLabel ? 2 : 0);
+			m = Math.max(m, len, maxLabelLength(n.children));
+		}
+		return m;
+	}
+	$: roleCol = `${Math.max(ROLE_COL_MIN_REM, Math.ceil(maxLabelLength($snapshotStore?.roots) * ROLE_GLYPH_REM * 4) / 4)}rem`;
 </script>
 
 {#if $snapshotErrorStore}
@@ -40,7 +59,7 @@
 		No running instances of <code>{$snapshotStore.target}</code>.
 	</p>
 {:else}
-	<div class="tree" style="--left-col: {leftCol}">
+	<div class="tree" style="--left-col: {leftCol}; --role-col: {roleCol}">
 		<div class="header-row">
 			<span>Process</span>
 			<span>Type</span>
@@ -90,7 +109,7 @@
 	   the row template in ProcessNode.svelte, mirror it here. */
 	.header-row {
 		display: grid;
-		grid-template-columns: var(--left-col, 12.5rem) 10rem 3rem 6rem 3rem 5rem auto;
+		grid-template-columns: var(--left-col, 12.5rem) var(--role-col, 10rem) 3rem 6rem 3rem 5rem auto;
 		gap: 0.4rem;
 		padding: 0.25rem 0.4rem 0.5rem 0.4rem;
 		margin-bottom: 0.25rem;

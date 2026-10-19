@@ -80,7 +80,7 @@ func TestAssembleTree_SingleMain(t *testing.T) {
 	raws := []RawProcess{
 		{PID: 100, PPID: 1, Name: "app.exe", Cmdline: "app.exe"},
 	}
-	snap := assembleTree(raws, "app", testTime)
+	snap := assembleTree(raws, "app", testTime, nil)
 	if len(snap.Roots) != 1 {
 		t.Fatalf("expected 1 root, got %d", len(snap.Roots))
 	}
@@ -95,7 +95,7 @@ func TestAssembleTree_ParentWithChildren(t *testing.T) {
 		{PID: 101, PPID: 100, Name: "app.exe", Cmdline: "app.exe --type=renderer", MemRSS: 200 << 20},
 		{PID: 102, PPID: 100, Name: "app.exe", Cmdline: "app.exe --type=gpu-process", MemRSS: 50 << 20},
 	}
-	snap := assembleTree(raws, "app", testTime)
+	snap := assembleTree(raws, "app", testTime, nil)
 	if len(snap.Roots) != 1 {
 		t.Fatalf("expected 1 root, got %d", len(snap.Roots))
 	}
@@ -121,7 +121,7 @@ func TestAssembleTree_OrphanBecomesRoot(t *testing.T) {
 		{PID: 100, PPID: 1, Name: "app.exe", Cmdline: "app.exe", MemRSS: 50 << 20},
 		{PID: 101, PPID: 999, Name: "app.exe", Cmdline: "app.exe --type=utility", MemRSS: 10 << 20},
 	}
-	snap := assembleTree(raws, "app", testTime)
+	snap := assembleTree(raws, "app", testTime, nil)
 	if len(snap.Roots) != 2 {
 		t.Fatalf("expected 2 roots (parent + orphan), got %d", len(snap.Roots))
 	}
@@ -133,7 +133,7 @@ func TestAssembleTree_RootsSortedByMem(t *testing.T) {
 		{PID: 2, PPID: 0, Name: "app.exe", Cmdline: "app.exe", MemRSS: 50 << 20},
 		{PID: 3, PPID: 0, Name: "app.exe", Cmdline: "app.exe", MemRSS: 30 << 20},
 	}
-	snap := assembleTree(raws, "app", testTime)
+	snap := assembleTree(raws, "app", testTime, nil)
 	if len(snap.Roots) != 3 {
 		t.Fatalf("expected 3 roots, got %d", len(snap.Roots))
 	}
@@ -224,7 +224,7 @@ func TestAssembleTree_InfersCrashpadRoleFromBinaryName(t *testing.T) {
 		{PID: 100, PPID: 1, Name: "sumwall.browser", Cmdline: "sumwall.browser"},
 		{PID: 102, PPID: 100, Name: "crashpad_handler.exe", Cmdline: "crashpad_handler.exe --initial-client-data=0,1,2"},
 	}
-	snap := assembleTree(raws, "sumwall.browser", testTime)
+	snap := assembleTree(raws, "sumwall.browser", testTime, nil)
 	if len(snap.Roots) != 1 {
 		t.Fatalf("expected 1 root, got %d", len(snap.Roots))
 	}
@@ -247,7 +247,7 @@ func TestAssembleTree_DoesNotOverrideTargetMainRole(t *testing.T) {
 	raws := []RawProcess{
 		{PID: 100, PPID: 1, Name: "app.exe", Cmdline: "app.exe"},
 	}
-	snap := assembleTree(raws, "app", testTime)
+	snap := assembleTree(raws, "app", testTime, nil)
 	if snap.Roots[0].Role != RoleMain {
 		t.Errorf("root role = %q, want %q", snap.Roots[0].Role, RoleMain)
 	}
@@ -277,7 +277,7 @@ func TestAssembleTree_PropagatesCPUTime(t *testing.T) {
 		{PID: 100, PPID: 1, Name: "app.exe", Cmdline: "app.exe", CPUSeconds: 1.234},
 		{PID: 101, PPID: 100, Name: "app.exe", Cmdline: "app.exe --type=renderer", CPUSeconds: 0.5},
 	}
-	snap := assembleTree(raws, "app", testTime)
+	snap := assembleTree(raws, "app", testTime, nil)
 	if snap.Roots[0].CPUTimeMs != 1234 {
 		t.Errorf("root CPUTimeMs = %d, want 1234", snap.Roots[0].CPUTimeMs)
 	}

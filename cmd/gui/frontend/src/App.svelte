@@ -16,14 +16,14 @@
 	import StatusBar from "./lib/StatusBar.svelte";
 	import Settings from "./lib/Settings.svelte";
 	import DiscoveredAppsBar from "./lib/DiscoveredAppsBar.svelte";
-	import { refreshTargetIcon, targetIconStore, onIconError } from "./lib/iconResolver";
-	import { friendlyName } from "./lib/friendlyName";
+	import { refreshTarget, targetIconStore, targetLabelStore, onIconError } from "./lib/iconResolver";
 
 	// Monitored app, shown centred in the top bar so the eye lands on it
 	// straight away. Config-driven (not snapshot-driven) so it flips the
-	// instant the user picks another app, before the new tree arrives.
+	// instant the user picks another app, before the new tree arrives: the
+	// raw name shows at once and the backend's display name replaces it.
 	$: targetName = $configStore?.appName ?? "";
-	$: targetLabel = friendlyName(targetName);
+	$: targetLabel = targetName ? $targetLabelStore || targetName : "";
 
 	// ── Window fit ──
 	// Height is fixed: room for the header, the optional apps / settings
@@ -412,9 +412,10 @@
 		unsubDiscovery = bridge.onDiscovery((apps) => {
 			discoveredAppsStore.set(apps ?? []);
 			// Piggyback on the 5 s discovery cadence: any private icon the user
-			// drops into the config directory shows up within one tick without
-			// having to wire a refresh through SetTargetApp / OpenConfigInEditor.
-			refreshTargetIcon($configStore?.appName ?? "");
+			// drops into the config directory, or an edit to apps.json, shows
+			// up within one tick without having to wire a refresh through
+			// SetTargetApp / OpenConfigInEditor.
+			refreshTarget($configStore?.appName ?? "");
 		});
 
 		unsubDiscoveryError = bridge.onDiscoveryError(() => {
@@ -467,7 +468,7 @@
 
 	// The header icon follows the configured target: re-resolve whenever the
 	// user picks a different app (apps bar, settings, status bar editor).
-	$: refreshTargetIcon($configStore?.appName ?? "");
+	$: refreshTarget($configStore?.appName ?? "");
 </script>
 
 <main>

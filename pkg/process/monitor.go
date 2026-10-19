@@ -25,7 +25,7 @@ func BuildSnapshot(provider Provider, target string) (*ProcessSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	return assembleTree(raws, target, time.Now()), nil
+	return assembleTree(raws, target, time.Now(), nil), nil
 }
 
 // assembleTree wires raw process records into a parent / child tree.
@@ -35,7 +35,10 @@ func BuildSnapshot(provider Provider, target string) (*ProcessSnapshot, error) {
 //
 // Children are sorted heaviest-first by MemMB at every level. Sort is stable
 // so equal-memory siblings keep enumeration order.
-func assembleTree(raws []RawProcess, target string, capturedAt time.Time) *ProcessSnapshot {
+//
+// isMultiGroup is the optional catalog hint passed to resolveHost; nil means
+// "rely on command-line signals only".
+func assembleTree(raws []RawProcess, target string, capturedAt time.Time, isMultiGroup func(string) bool) *ProcessSnapshot {
 	nodes := make(map[int32]*ProcessNode, len(raws))
 	pids := make(map[int32]struct{}, len(raws))
 	wantTarget := NormalizeTargetName(target)
@@ -53,7 +56,7 @@ func assembleTree(raws []RawProcess, target string, capturedAt time.Time) *Proce
 				role = inferred
 			}
 		}
-		nodes[r.PID] = &ProcessNode{
+		n := &ProcessNode{
 			PID:       r.PID,
 			PPID:      r.PPID,
 			Role:      role,
@@ -63,6 +66,10 @@ func assembleTree(raws []RawProcess, target string, capturedAt time.Time) *Proce
 			CPUTimeMs: uint64(r.CPUSeconds * 1000),
 			Cmdline:   r.Cmdline,
 		}
+		if role == RoleMain {
+			n.Host, n.HostPID = resolveHost(r, isMultiGroup)
+		}
+		nodes[r.PID] = n
 	}
 
 	var roots []*ProcessNode
@@ -86,6 +93,40 @@ func assembleTree(raws []RawProcess, target string, capturedAt time.Time) *Proce
 		Captured: capturedAt,
 		Total:    len(raws),
 	}
+}
+
+// resolveHost identifies the app that embeds a main process, for runtimes
+// such as Microsoft Edge WebView2 that any app can launch to draw its window.
+// Each host gets its own process group, so one executable shows up as many
+// independent trees; naming the host is what tells them apart. Nothing here
+// knows which apps exist: the host is discovered from the process itself.
+//
+//  1. The runtime names its host on the command line (--webview-exe-name=).
+//     The parent's PID is reported when the parent is that exe.
+//  2. Otherwise, a process marked as embedded (--embedded-browser-webview)
+//     or one whose exe the catalog flags as multiGroup is hosted by its
+//     parent, as long as the parent is a different executable.
+//
+// Anything else (a regular browser whose parent is the shell, an orphan
+// whose parent is gone) has no host.
+func resolveHost(r RawProcess, isMultiGroup func(string) bool) (string, int32) {
+	exe, embedded := EmbeddedHost(r.Cmdline)
+	parent := NormalizeTargetName(r.ParentName)
+	parentIsOther := parent != "" && parent != NormalizeTargetName(r.Name)
+
+	if exe != "" {
+		if parentIsOther && parent == NormalizeTargetName(exe) {
+			return r.ParentName, r.PPID
+		}
+		return exe, 0
+	}
+	if !embedded && (isMultiGroup == nil || !isMultiGroup(r.Name)) {
+		return "", 0
+	}
+	if !parentIsOther {
+		return "", 0
+	}
+	return r.ParentName, r.PPID
 }
 
 func sortByMem(nodes []*ProcessNode) {
@@ -152,6 +193,18 @@ type Monitor struct {
 	// otherwise be diffed against a sample from before the switch.
 	target string
 	prev   map[int32]cpuSample
+	// multiGroup is the catalog hint for resolveHost; see SetMultiGroup.
+	multiGroup func(string) bool
+}
+
+// SetMultiGroup installs the predicate that tells which executables are
+// multiGroup runtimes (hosted by other apps) even when their command line
+// does not say so. pkg/process does not depend on the catalog; the caller
+// wires it in. nil disables the hint.
+func (m *Monitor) SetMultiGroup(fn func(name string) bool) {
+	m.mu.Lock()
+	m.multiGroup = fn
+	m.mu.Unlock()
 }
 
 // NewMonitor returns a Monitor that uses the supplied Provider. NumCPU is
@@ -222,9 +275,10 @@ func (m *Monitor) Snapshot(target string) (*ProcessSnapshot, error) {
 		pcts[r.PID] = pct
 	}
 	m.prev = next
+	isMultiGroup := m.multiGroup
 	m.mu.Unlock()
 
-	snap := assembleTree(raws, target, now)
+	snap := assembleTree(raws, target, now, isMultiGroup)
 	applyCPUPercent(snap.Roots, pcts)
 	return snap, nil
 }

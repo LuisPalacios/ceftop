@@ -3,6 +3,8 @@
 import {main} from '../models';
 import {process} from '../models';
 
+export function DescribeApp(arg1:string):Promise<main.AppInfo>;
+
 export function DiscoverApps():Promise<Array<main.DiscoveredAppView>>;
 
 export function FrontendReady():Promise<void>;
@@ -15,9 +17,11 @@ export function KillProcess(arg1:number):Promise<process.KillResult>;
 
 export function Log(arg1:string):Promise<void>;
 
+export function OpenCatalogInEditor():Promise<void>;
+
 export function OpenConfigInEditor():Promise<void>;
 
-export function ResolveIcon(arg1:string):Promise<string>;
+export function RenameHost(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SetTargetApp(arg1:string):Promise<void>;
 

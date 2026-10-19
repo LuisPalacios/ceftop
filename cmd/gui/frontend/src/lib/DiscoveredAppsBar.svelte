@@ -7,11 +7,24 @@
 		showDiscoveredApps,
 	} from "./stores";
 	import { onIconError, BUNDLED_DEFAULT_ICON } from "./iconResolver";
-	import { friendlyName } from "./friendlyName";
 	import type { DiscoveredApp } from "./types";
 
 	$: cfg = $configStore;
 	$: apps = $discoveredAppsStore ?? [];
+
+	// Tooltip: the exe, how busy it is and, for an embedded runtime such as
+	// WebView2, which apps it is drawing for right now.
+	function tooltip(app: DiscoveredApp): string {
+		const head =
+			app.childCount === 0
+				? `${app.name} — not running`
+				: app.childCount === 1
+					? `${app.name} — 1 child`
+					: `${app.name} — ${app.childCount} children`;
+		const hosts = app.hosts ?? [];
+		if (hosts.length === 0) return head;
+		return `${head}\nHosting: ${hosts.map((h) => h.label).join(", ")}`;
+	}
 
 	let switching = "";
 
@@ -44,11 +57,7 @@
 				class:offline={app.childCount === 0}
 				on:click={() => pick(app)}
 				disabled={switching !== "" && switching !== app.name}
-				title={app.childCount === 0
-					? `${app.name} — not running`
-					: app.childCount === 1
-						? `${app.name} — 1 child`
-						: `${app.name} — ${app.childCount} children`}
+				title={tooltip(app)}
 			>
 				<img
 					class="apps-icon"
@@ -56,7 +65,7 @@
 					alt=""
 					on:error={onIconError}
 				/>
-				<span class="apps-label">{friendlyName(app.name)}</span>
+				<span class="apps-label">{app.friendlyName || app.name}</span>
 			</button>
 		{/each}
 	</div>
