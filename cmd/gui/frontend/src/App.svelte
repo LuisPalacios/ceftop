@@ -363,6 +363,10 @@
 	}
 
 	function onKeydown(e: KeyboardEvent) {
+		if (e.key === "Escape" && !e.defaultPrevented && !isTextField(e.target)) {
+			if (closeLastPanel()) e.preventDefault();
+			return;
+		}
 		if (!(e.ctrlKey || e.metaKey)) return;
 		// "+" arrives as either "+", "=", or " Plus"; "-" as "-" or "Minus".
 		if (e.key === "+" || e.key === "=") {
@@ -390,6 +394,13 @@
 			zoom = saved;
 		}
 		applyZoom();
+
+		// Reopen the apps bar if it was open when the app last closed.
+		try {
+			if (localStorage.getItem(APPS_BAR_KEY) === "1") setPanel("apps", true);
+		} catch {
+			/* storage unavailable — start closed */
+		}
 
 		try {
 			const cfg = await bridge.getConfig();
@@ -449,18 +460,58 @@
 		window.removeEventListener("keydown", onKeydown);
 	});
 
-	function toggleSettings() {
-		showSettings.update((v) => !v);
-		// Settings panel uses a 150ms slide transition; measuring during the
-		// slide would catch a half-collapsed height. Wait for it to finish
-		// before re-fitting, otherwise the gear close leaves trailing space.
+	// ── Panels (apps bar, settings) ──
+	// Both are docked slide-downs, not popovers: they stay open until the
+	// user closes them with their header toggle or Esc, never on a pick or
+	// a click elsewhere. Esc closes the most recently opened one first, one
+	// per press, and leaves Esc inside a text field to that field (it
+	// cancels the edit). The apps bar remembers its state across launches
+	// because it is a working surface; Settings always starts closed.
+	type Panel = "apps" | "settings";
+	const APPS_BAR_KEY = "ceftop:appsbar";
+	let openOrder: Panel[] = [];
+
+	function setPanel(panel: Panel, open: boolean) {
+		const store = panel === "apps" ? showDiscoveredApps : showSettings;
+		store.set(open);
+		openOrder = openOrder.filter((p) => p !== panel);
+		if (open) openOrder = [...openOrder, panel];
+		if (panel === "apps") {
+			try {
+				localStorage.setItem(APPS_BAR_KEY, open ? "1" : "0");
+			} catch {
+				/* private browsing or quota — ignore */
+			}
+		}
+		// Panels use a 150ms slide transition; measuring during the slide
+		// would catch a half-collapsed height. Wait for it to finish before
+		// re-fitting, otherwise a close leaves trailing space.
 		setTimeout(scheduleFit, 200);
 	}
 
+	function toggleSettings() {
+		setPanel("settings", !$showSettings);
+	}
+
 	function toggleDiscoveredApps() {
-		// Mirrors toggleSettings; same 150ms slide → same 200ms re-fit delay.
-		showDiscoveredApps.update((v) => !v);
-		setTimeout(scheduleFit, 200);
+		setPanel("apps", !$showDiscoveredApps);
+	}
+
+	function isTextField(t: EventTarget | null): boolean {
+		return (
+			t instanceof HTMLInputElement ||
+			t instanceof HTMLTextAreaElement ||
+			t instanceof HTMLSelectElement ||
+			(t instanceof HTMLElement && t.isContentEditable)
+		);
+	}
+
+	// Returns true when Esc closed a panel.
+	function closeLastPanel(): boolean {
+		const last = openOrder[openOrder.length - 1];
+		if (!last) return false;
+		setPanel(last, false);
+		return true;
 	}
 
 	$: appsButtonDisabled =
@@ -499,7 +550,9 @@
 					disabled={appsButtonDisabled}
 					title={appsButtonDisabled
 						? "No CEF/Chromium apps detected"
-						: "Discovered apps"}
+						: $showDiscoveredApps
+							? "Hide discovered apps (Esc)"
+							: "Discovered apps"}
 					aria-label="Discovered apps"
 				>
 					&#9638;
@@ -508,7 +561,7 @@
 					class="btn-gear"
 					class:active={$showSettings}
 					on:click={toggleSettings}
-					title="Settings"
+					title={$showSettings ? "Hide settings (Esc)" : "Settings"}
 					aria-label="Settings"
 				>
 					&#9881;
